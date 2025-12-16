@@ -213,15 +213,15 @@ def global_wraparound(pattern: str, text: str):
         for j in range(1, m + 1):
             v = dp[i-1][j] - 1
             h = dp[i][j-1] - 1  # It is corrected in the wraparound pass
-            d = (dp[i-1][j-1] if j > 1 else dp[i-1][m]) + cost(text[i-1], pattern[j-1])
+            d = dp[i-1][j-1] + cost(text[i-1], pattern[j-1])
             dp[i][j] = max(v, h, d)
-        dp[i][0] = dp[i][m]
+        dp[i][0] = dp[i][m]  # In next round, it also serves for diagonal transfer
         for j in range(1, m + 1):
             dp[i][j] = max(dp[i][j], dp[i][j-1] - 1)
     print('Global wraparound DP: best score=%d' % dp[n].max())
 
-    last_row_max, x, y = dp[n][0], n, 0
-    for j in range(1, m + 1):
+    last_row_max, x, y = dp[n][1], n, 1
+    for j in range(2, m + 1):
         if dp[n][j] > last_row_max:
             last_row_max = dp[n][j]
             y = j
@@ -233,7 +233,10 @@ def global_wraparound(pattern: str, text: str):
             elif dp[x][1] == dp[x-1][m] - 1:
                 bt.append((x-1, 1))
             else:
-                bt.append((x-1, m))
+                if x == 1:
+                    bt.append((x-1, 0))
+                else:
+                    bt.append((x-1, m))
         elif dp[x][y] == dp[x][y-1] - 1:
             bt.append((x, y-1))
         elif dp[x][y] == dp[x-1][y] - 1:
