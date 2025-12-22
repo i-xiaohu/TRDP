@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import sys
+import random
 
 
 def load_test_seq(fn: str, n: int):
@@ -126,7 +127,6 @@ def solve(text: str):
     i = n - 1
     while i >= 0:
         p = bt[i]
-        print(p)
         if p != i-1:
             n_repeats += 1
             print('Repeat %d: motif=%s, target=%s, score=%d' % (n_repeats, p[2], p[3], p[1]))
@@ -136,6 +136,11 @@ def solve(text: str):
 
 
 if __name__ == '__main__':
+    # FIXME: the algorithm went wrong if the repeat was flanked by random sequences
     seq = load_test_seq('./motif.csv', int(sys.argv[1]))
+    for i in range(80):
+        seq = 'ACGT'[random.randint(0, 3)] + seq
+    for i in range(80):
+        seq = seq + 'ACGT'[random.randint(0, 3)]
     print('sequence length: %d' % (len(seq)))
     solve(seq)
