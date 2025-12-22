@@ -81,7 +81,7 @@ def visualize(text: str, bt):
     plt.xlim(0, n + 1)
     plt.ylim(n + 1, 0)
 
-    copy_label, non_rep_label = True, True
+    copy_label, non_rep_label, tr_label = True, True, True
     i = n - 1
     x0, y0 = i, i
     while i >= 0:
@@ -90,7 +90,11 @@ def visualize(text: str, bt):
             motif = p[2][::-1]
             mlen, tlen = len(motif), i - p[0]
             x1, y1 = p[0], p[0]
-            plt.plot([x0, x1], [y0, y1], color='red', label='tandem repeat')
+            if tr_label:
+                plt.plot([x0, x1], [y0, y1], color='red', label='tandem repeat')
+                tr_label = False
+            else:
+                plt.plot([x0, x1], [y0, y1], color='red')
             plt.text(x1, y0+2, 'motif=%s, repeat_range=[%d,%d)' % (motif, p[0]+1, i+1))
             plt.plot([x0, x0-tlen+mlen], [y0, y0], color='red', linestyle='--')
             repeat_time = tlen // mlen
