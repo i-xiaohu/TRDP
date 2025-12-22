@@ -230,7 +230,7 @@ def global_wraparound(pattern: str, text: str):
         if y == 1:
             if dp[x][1] == dp[x][m] - 1:
                 bt.append((x, m))
-            elif dp[x][1] == dp[x-1][m] - 1:
+            elif dp[x][1] == dp[x-1][1] - 1:
                 bt.append((x-1, 1))
             else:
                 if x == 1:

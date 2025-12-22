@@ -21,23 +21,47 @@ def duplicate(motif: str, target: str):
         for j in range(1, m + 1):
             v = dp[i-1][j] - 1
             h = dp[i][j-1] - 1
-            d = dp[i-1][j-1] + (1 if target[i-1] == motif[j-1] else -1)
+            d = dp[i-1][j-1] + (1 if target[i-1] == motif[j-1] else -3)
             dp[i][j] = max(v, h, d)
         dp[i][0] = dp[i][m]
         for j in range(1, m + 1):
             dp[i][j] = max(dp[i][j], dp[i][j-1] - 1)
         # FIXME: Is it correct?
-        # if dp[i].max() < 0:
-        #     break
+        if dp[i].max() < 0:
+            break
     max_score, ext = -n * m, -1
     for i in range(1, n + 1):
-        # FIXME: I ignore the incomplete copy that might be better for easy implementation
+        # FIXME: I ignore incomplete - potentially optimal - copy for easy implementation
         if dp[i][m] > max_score:
             max_score = dp[i][m]
             ext = i
-    if max_score < 0:
+    if max_score <= 0:
         max_score = 0
         ext = 0
+    else:
+        x, y, n_copy = ext, m, 0
+        bt = [(x, y)]
+        while x > 0 and y > 0:
+            if y == 1:
+                if dp[x][1] == dp[x][m] - 1:
+                    n_copy += 1
+                    bt.append((x, m))
+                elif dp[x][1] == dp[x-1][1] - 1:
+                    bt.append((x-1, 1))
+                else:
+                    n_copy += 1
+                    if x == 1:
+                        bt.append((x-1, 0))
+                    else:
+                        bt.append((x-1, m))
+            elif dp[x][y] == dp[x][y-1] - 1:
+                bt.append((x, y-1))
+            elif dp[x][y] == dp[x-1][y] - 1:
+                bt.append((x-1, y))
+            else:
+                bt.append((x-1, y-1))
+            x, y = bt[-1]
+        max_score += n_copy
     return max_score, ext
 
 
@@ -61,10 +85,17 @@ def solve(text: str):
     max_motif_len = 100
     n = len(text)
     dp = np.zeros(n, dtype=int)
+    bt = dict()
     for i in range(0, min_repeat_len):
         dp[i] = i + 1
+        bt[i] = i - 1
+    # TODO: the loop is O(N^2 * L^2)
     for i in range(min_repeat_len, n):
+        print('i = %d' % i)
         dp[i] = dp[i-1] + 1
+        bt[i] = i - 1
+        activate_early_stop = False
+        fail_streak = 0
         for l in range(2, min(max_motif_len, i // 2)):
             motif = text[i - l + 1: i + 1]
             target = text[0: i - l + 1]
@@ -72,18 +103,36 @@ def solve(text: str):
             target = target[::-1]
             # print('motif=%s [%d,%d), target=%s [%d,%d)' % (motif, i-l+1, i+1, target, 0, i-l+1))
             w_score, ext = duplicate(motif, target)
+            if w_score == 0 or ext + l < min_repeat_len:
+                fail_streak += 1
+                continue
+            if activate_early_stop and fail_streak > 10:
+                break
+            fail_streak = 0
+            activate_early_stop = True
             # print('w_score=%d, ext=%d, start=%d' % (w_score, ext, i - l - ext))
             # No reward for itself (it is not a copy)
             w = w_score + l + open_penalty
             if i - l - ext == -1:  # Extend to the start
-                dp[i] = max(dp[i], w)
+                if w >= dp[i]:
+                    dp[i] = w
+                    bt[i] = (-1, w_score, motif, target)
             else:
-                dp[i] = max(dp[i], dp[i - l - ext] + w)
+                if dp[i - l - ext] + w > dp[i]:
+                    dp[i] = dp[i - l - ext] + w
+                    bt[i] = (i - l - ext, w_score, motif, target)
+
     n_repeats = 0
-    for i in range(2, n):
-        if dp[i] != dp[i-1] + 1:
+    i = n - 1
+    while i >= 0:
+        p = bt[i]
+        print(p)
+        if p != i-1:
             n_repeats += 1
-    print('%d repeats identified' % (n_repeats))
+            print('Repeat %d: motif=%s, target=%s, score=%d' % (n_repeats, p[2], p[3], p[1]))
+            i = p[0]
+        else:
+            i -= 1
 
 
 if __name__ == '__main__':
