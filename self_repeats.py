@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import sys
-import random
 
 
 def load_test_seq(fn: str, n: int):
@@ -14,23 +13,24 @@ def duplicate(motif: str, target: str):
     m = len(motif)
     dp = np.zeros((n + 1, m + 1), dtype=int)
     dp[0][0] = 0
+    mat_s, mis_p, gap_p = 1, -3, -2
     for i in range(1, n + 1):
-        dp[i][0] = -i
+        dp[i][0] = i * gap_p
     for j in range(1, m + 1):
-        dp[0][j] = -j
+        dp[0][j] = j * gap_p
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            v = dp[i-1][j] - 1
-            h = dp[i][j-1] - 1
-            d = dp[i-1][j-1] + (1 if target[i-1] == motif[j-1] else -3)
+            v = dp[i-1][j] + gap_p
+            h = dp[i][j-1] + gap_p
+            d = dp[i-1][j-1] + (mat_s if target[i-1] == motif[j-1] else gap_p)
             dp[i][j] = max(v, h, d)
         dp[i][0] = dp[i][m]
         for j in range(1, m + 1):
-            dp[i][j] = max(dp[i][j], dp[i][j-1] - 1)
+            dp[i][j] = max(dp[i][j], dp[i][j-1] + gap_p)
         # FIXME: Is it correct?
         if dp[i].max() < 0:
             break
-    max_score, ext = -n * m, -1
+    max_score, ext = n * m * min(gap_p, mis_p), -1
     for i in range(1, n + 1):
         # FIXME: I ignore incomplete - potentially optimal - copy for easy implementation
         if dp[i][m] > max_score:
@@ -44,10 +44,10 @@ def duplicate(motif: str, target: str):
         bt = [(x, y)]
         while x > 0 and y > 0:
             if y == 1:
-                if dp[x][1] == dp[x][m] - 1:
+                if dp[x][1] == dp[x][m] + gap_p:
                     n_copy += 1
                     bt.append((x, m))
-                elif dp[x][1] == dp[x-1][1] - 1:
+                elif dp[x][1] == dp[x-1][1] + gap_p:
                     bt.append((x-1, 1))
                 else:
                     n_copy += 1
@@ -55,9 +55,9 @@ def duplicate(motif: str, target: str):
                         bt.append((x-1, 0))
                     else:
                         bt.append((x-1, m))
-            elif dp[x][y] == dp[x][y-1] - 1:
+            elif dp[x][y] == dp[x][y-1] + gap_p:
                 bt.append((x, y-1))
-            elif dp[x][y] == dp[x-1][y] - 1:
+            elif dp[x][y] == dp[x-1][y] + gap_p:
                 bt.append((x-1, y))
             else:
                 bt.append((x-1, y-1))
@@ -83,6 +83,7 @@ def solve(text: str):
 
     min_repeat_len = 10
     open_penalty = -5
+    min_motif_len = 3
     max_motif_len = 100
     n = len(text)
     dp = np.zeros(n, dtype=int)
@@ -97,7 +98,7 @@ def solve(text: str):
         bt[i] = i - 1
         activate_early_stop = False
         fail_streak = 0
-        for l in range(2, min(max_motif_len, i // 2)):
+        for l in range(min_motif_len, min(max_motif_len, i // 2)):
             motif = text[i - l + 1: i + 1]
             target = text[0: i - l + 1]
             motif = motif[::-1]
@@ -110,16 +111,17 @@ def solve(text: str):
             if activate_early_stop and fail_streak > 10:
                 break
             fail_streak = 0
-            activate_early_stop = True
             # print('w_score=%d, ext=%d, start=%d' % (w_score, ext, i - l - ext))
             # No reward for itself (it is not a copy)
             w = w_score + l + open_penalty
             if i - l - ext == -1:  # Extend to the start
                 if w >= dp[i]:
+                    activate_early_stop = True
                     dp[i] = w
                     bt[i] = (-1, w_score, motif, target)
             else:
                 if dp[i - l - ext] + w > dp[i]:
+                    activate_early_stop = True
                     dp[i] = dp[i - l - ext] + w
                     bt[i] = (i - l - ext, w_score, motif, target)
 
@@ -129,18 +131,13 @@ def solve(text: str):
         p = bt[i]
         if p != i-1:
             n_repeats += 1
-            print('Repeat %d: motif=%s, target=%s, score=%d' % (n_repeats, p[2], p[3], p[1]))
+            print('Repeat %d: motif=%s, target=%s [%d,%d), score=%d' % (n_repeats, p[2][::-1], p[3][::-1], p[0]+1, i+1, p[1]))
             i = p[0]
         else:
             i -= 1
 
 
 if __name__ == '__main__':
-    # FIXME: the algorithm went wrong if the repeat was flanked by random sequences
     seq = load_test_seq('./motif.csv', int(sys.argv[1]))
-    for i in range(80):
-        seq = 'ACGT'[random.randint(0, 3)] + seq
-    for i in range(80):
-        seq = seq + 'ACGT'[random.randint(0, 3)]
     print('sequence length: %d' % (len(seq)))
     solve(seq)
