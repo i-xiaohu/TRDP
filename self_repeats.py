@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import sys
+import matplotlib.pyplot as plt
 
 
 def load_test_seq(fn: str, n: int):
@@ -64,6 +65,68 @@ def duplicate(motif: str, target: str):
             x, y = bt[-1]
         max_score += n_copy
     return max_score, ext
+
+
+def visualize(text: str, bt):
+    n = len(text)
+    width = height = 8
+    plt.figure(figsize=(width, height), dpi=350)
+    ax = plt.gca()
+    # axes scale equally in the gridded figure
+    ax.set_aspect('equal', adjustable='box')
+    # put origin point on left-top corner
+    ax.invert_yaxis()
+    ax.xaxis.set_ticks_position('top')
+    ax.xaxis.set_label_position('top')
+    plt.xlim(0, n + 1)
+    plt.ylim(n + 1, 0)
+
+    copy_label, non_rep_label = True, True
+    i = n - 1
+    x0, y0 = i, i
+    while i >= 0:
+        p = bt[i]
+        if p != i-1:
+            motif = p[2][::-1]
+            mlen, tlen = len(motif), i - p[0]
+            x1, y1 = p[0], p[0]
+            plt.plot([x0, x1], [y0, y1], color='red', label='tandem repeat')
+            plt.text(x1, y0+2, 'motif=%s, repeat_range=[%d,%d)' % (motif, p[0]+1, i+1))
+            plt.plot([x0, x0-tlen+mlen], [y0, y0], color='red', linestyle='--')
+            repeat_time = tlen // mlen
+            px, py = x0-tlen+mlen, y0
+            for k in range(0, repeat_time - 1):
+                nx, ny = px - mlen, py
+                plt.plot([px, nx], [py, ny], color='red', linestyle='--')
+                px, py = nx, ny
+                nx, ny = px + mlen, py - mlen
+                if copy_label:
+                    plt.plot([px, nx], [py, ny], color='green', label='copy')
+                    copy_label = False
+                else:
+                    plt.plot([px, nx], [py, ny], color='green')
+                px, py = nx, ny
+            x0, y0 = x1, y1
+            i = p[0]
+        else:
+            x1, y1 = i - 1, i - 1
+            if non_rep_label:
+                plt.plot([x0, x1], [y0, y1], color='blue', label='non-repetitive')
+                non_rep_label = False
+            else:
+                plt.plot([x0, x1], [y0, y1], color='blue')
+            i -= 1
+            x0, y0 = x1, y1
+    ax.set_title('Tandem Repeat Self Alignment')
+    x_ticks = [i * 10 for i in range(0, n // 10 + 1)]
+    y_ticks = [i * 10 for i in range(0, n // 10 + 1)]
+    ax.set_xticks(x_ticks)
+    ax.set_yticks(y_ticks)
+    ax.set_xlabel('Sequence S (len=%d)' % n)
+    ax.set_ylabel('Sequence S (len=%d)' % n)
+    plt.grid()
+    plt.legend()
+    plt.savefig("./self_matrix.png")
 
 
 def solve(text: str):
@@ -135,6 +198,8 @@ def solve(text: str):
             i = p[0]
         else:
             i -= 1
+
+    visualize(text, bt)
 
 
 if __name__ == '__main__':
