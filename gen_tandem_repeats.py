@@ -54,12 +54,24 @@ def gen_repeat(motif_len: int, repeat_n: int, mutation_rate: float, flank_l: int
     tab['flank_l'].append(flank_l)
     tab['flank_r'].append(flank_r)
     tab['text'].append(text)
+    return text
+
+
+def combine_text(text_array: tuple, tab: pd):
+    tab['ID'].append(len(tab['ID']) + 1)
+    tab['motif'].append('NA')
+    tab['periods'].append('NA')
+    tab['mutation'].append('NA')
+    tab['flank_l'].append('NA')
+    tab['flank_r'].append('NA')
+    tab['text'].append(''.join(text_array))
 
 
 if __name__ == '__main__':
     table = {'ID': [], 'motif': [], 'periods': [], 'mutation': [], 'flank_l': [], 'flank_r': [], 'text': []}
-    gen_repeat(motif_len=3, repeat_n=5, mutation_rate=0.0, flank_l=7, flank_r=8, tab=table)
-    gen_repeat(motif_len=5, repeat_n=8, mutation_rate=0.02, flank_l=20, flank_r=40, tab=table)
+    text1 = gen_repeat(motif_len=3, repeat_n=15, mutation_rate=0.0, flank_l=8, flank_r=8, tab=table)
+    text2 = gen_repeat(motif_len=5, repeat_n=10, mutation_rate=0.0, flank_l=20, flank_r=20, tab=table)
+    combine_text(text_array=(text1, text2), tab=table)
     gen_repeat(motif_len=10, repeat_n=20, mutation_rate=0.05, flank_l=80, flank_r=80, tab=table)
     gen_repeat(motif_len=50, repeat_n=40, mutation_rate=0.07, flank_l=150, flank_r=125, tab=table)
     # gen_repeat(motif_len=100, repeat_n=100, mutation_rate=0.1, flank_l=2000, flank_r=3000, tab=table)
