@@ -80,8 +80,8 @@ def visualize(text: str, bt):
     ax.xaxis.set_label_position('top')
     plt.xlim(0, n + 1)
     plt.ylim(n + 1, 0)
+    COLOR_TR, COLOR_COPY, COLOR_NON = 'red', 'blue', 'green'
 
-    copy_label, non_rep_label, tr_label = True, True, True
     i = n - 1
     x0, y0 = i, i
     while i >= 0:
@@ -90,35 +90,23 @@ def visualize(text: str, bt):
             motif = p[2][::-1]
             mlen, tlen = len(motif), i - p[0]
             x1, y1 = p[0], p[0]
-            if tr_label:
-                plt.plot([x0, x1], [y0, y1], color='red', label='tandem repeat')
-                tr_label = False
-            else:
-                plt.plot([x0, x1], [y0, y1], color='red')
+            plt.plot([x0, x1], [y0, y1], color=COLOR_TR)
             plt.text(x1, y0+2, 'motif=%s, repeat_range=[%d,%d)' % (motif, p[0]+1, i+1))
-            plt.plot([x0, x0-tlen+mlen], [y0, y0], color='red', linestyle='--')
+            plt.plot([x0, x0-tlen+mlen], [y0, y0], color=COLOR_TR, linestyle='--')
             repeat_time = tlen // mlen
             px, py = x0-tlen+mlen, y0
             for k in range(0, repeat_time - 1):
                 nx, ny = px - mlen, py
-                plt.plot([px, nx], [py, ny], color='red', linestyle='--')
+                plt.plot([px, nx], [py, ny], color=COLOR_TR, linestyle='--')
                 px, py = nx, ny
                 nx, ny = px + mlen, py - mlen
-                if copy_label:
-                    plt.plot([px, nx], [py, ny], color='green', label='copy')
-                    copy_label = False
-                else:
-                    plt.plot([px, nx], [py, ny], color='green')
+                plt.plot([px, nx], [py, ny], color=COLOR_COPY)
                 px, py = nx, ny
             x0, y0 = x1, y1
             i = p[0]
         else:
             x1, y1 = i - 1, i - 1
-            if non_rep_label:
-                plt.plot([x0, x1], [y0, y1], color='blue', label='non-repetitive')
-                non_rep_label = False
-            else:
-                plt.plot([x0, x1], [y0, y1], color='blue')
+            plt.plot([x0, x1], [y0, y1], color=COLOR_NON)
             i -= 1
             x0, y0 = x1, y1
     ax.set_title('Tandem Repeat Self Alignment')
@@ -129,6 +117,9 @@ def visualize(text: str, bt):
     ax.set_xlabel('Sequence S (len=%d)' % n)
     ax.set_ylabel('Sequence S (len=%d)' % n)
     plt.grid()
+    plt.plot([0, 0], [0, 0], color=COLOR_NON, label='non-repetitive')
+    plt.plot([0, 0], [0, 0], color=COLOR_TR, label='tandem repeat')
+    plt.plot([0, 0], [0, 0], color=COLOR_COPY, label='copy')
     plt.legend()
     plt.savefig("./self_matrix.png")
 
