@@ -83,6 +83,7 @@ def gary_benson(que: str, points_q: list, ref: str, points_r: list):
                         copy_score = dp[e][m2]
                         C1 = c
                         ext1 = e
+            # TODO: include copy events on query
             H[i][j] = max(M, E[i][j], F, C1)
             if H[i][j] == F:
                 bt[i][j] = HORIZONTAL
@@ -93,27 +94,80 @@ def gary_benson(que: str, points_q: list, ref: str, points_r: list):
             elif H[i][j] == C1:
                 # print('i=%d, j=%d, motif=%s, copy_score=%d, ext=%d' % (i, j, motif, C1, ext1))
                 bt[i][j] = len(cp_pool)
-                cp_pool.append((C1, smodel_score, copy_score, ext1))
+                cp_pool.append((C1, smodel_score, copy_score, motif_len1, ext1))
+
+    height = 8
+    width = round(height * m / n)
+    plt.figure(figsize=(width, height), dpi=350)
+    ax = plt.gca()
+    ax.set_aspect('equal', adjustable='box')
+    ax.invert_yaxis()
+    ax.xaxis.set_ticks_position('top')
+    ax.xaxis.set_label_position('top')
+    COLOR_TR, COLOR_COPY, COLOR_DIA, COLOR_GAP, COLOR_BP = 'red', 'blue', 'green', 'orange', 'grey'
 
     print('Score: %d' % H[n][m])
     n_del, n_ins, n_copy = 0, 0, 0
     i, j = n, m
+    x0, y0 = j, i
     while i >= 0 and j >= 0:
         if bt[i][j] == HORIZONTAL:
-            n_del += 1
-            j -= 1
-        elif bt[i][j] == VERTICAL:
             n_ins += 1
+            j -= 1
+            x1, y1 = j, i
+            plt.plot([x0, x1], [y0, y1], color=COLOR_GAP)
+            x0, y0 = x1, y1
+        elif bt[i][j] == VERTICAL:
+            n_del += 1
             i -= 1
+            x1, y1 = j, i
+            plt.plot([x0, x1], [y0, y1], color=COLOR_GAP)
+            x0, y0 = x1, y1
         elif bt[i][j] == DIAGNOAL:
             i, j = i - 1, j - 1
+            x1, y1 = j, i
+            plt.plot([x0, x1], [y0, y1], color=COLOR_DIA)
+            x0, y0 = x1, y1
         else:
             n_copy += 1
             k = bt[i][j]
-            c1, ss, cs, ext = cp_pool[k]
-            print('C=%d, s_model_score=%d, copy_score=%d, copy length=%d' % (c1, ss, cs, ext))
-            j -= ext
+            c1, ss, cs, mlen, tlen = cp_pool[k]
+            print('C=%d, s_model_score=%d, copy_score=%d, motif length=%d, copy length=%d' % (c1, ss, cs, mlen, tlen))
+            j -= tlen
+            x1, y1 = j, i
+            # plt.plot([x0, x1], [y0, y1], color=COLOR_TR)
+            plt.text(x1, y1+10, 'motif_len=%d, copy_len=%d' % (mlen, tlen))
+            # Zigzag rendering
+            px, py = x1, y1
+            repeat_time = round(tlen / mlen)
+            for k in range(0, repeat_time):
+                nx, ny = px, py - mlen
+                plt.plot([px, nx], [py, ny], color=COLOR_TR, linestyle='--')
+                px, py = nx, ny
+                nx, ny = px + mlen, py + mlen
+                plt.plot([px, nx], [py, ny], color=COLOR_COPY)
+                px, py = nx, ny
+            x0, y0 = x1, y1
+
+    for i in range(0, n):
+        if points_q[i] != -1:
+            plt.plot([0, 10], [i, i], color=COLOR_BP, linestyle='--')
+    for i in range(0, m):
+        if points_r[i] != -1:
+            plt.plot([i, i], [0, 10], color=COLOR_BP, linestyle='--')
+
     print('%d deletions, %d insertions, %d copies' % (n_del, n_ins, n_copy))
+    ax.set_title('Repeat-aware Alignment')
+    ax.set_xlabel('Sequence A (len=%d)' % m)
+    ax.set_ylabel('Sequence B (len=%d)' % n)
+    plt.grid()
+    plt.plot([0, 0], [0, 0], color=COLOR_DIA, label='mis/match')
+    plt.plot([0, 0], [0, 0], color=COLOR_GAP, label='indel')
+    # plt.plot([0, 0], [0, 0], color=COLOR_TR, label='tandem repeat')
+    plt.plot([0, 0], [0, 0], color=COLOR_COPY, label='copy')
+    plt.plot([0, 0], [0, 0], color=COLOR_BP, label='break points')
+    plt.legend()
+    plt.savefig("./gary_matrix.png")
 
 
 if __name__ == '__main__':
