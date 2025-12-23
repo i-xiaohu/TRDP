@@ -25,21 +25,22 @@ def visualize(que: str, ref: str, bt: np):
     plt.ylim(n + 1, 0)
     i, j = n, m
     DIAGNOAL, VERTICAL, HORIZONTAL = 0, 1, 2
+    COLOR_GAP, COLOR_DIA = 'orange', 'green'
     n_del, n_ins = 0, 0
     while i > 0 or j > 0:
         x0, y0 = j, i
         if bt[i][j] == DIAGNOAL:
             x1, y1 = j-1, i-1
-            plt.plot([x0, x1], [y0, y1], color='green')
+            plt.plot([x0, x1], [y0, y1], color=COLOR_DIA)
             i, j = i-1, j-1
         elif bt[i][j] == VERTICAL:
             x1, y1 = j, i-1
-            plt.plot([x0, x1], [y0, y1], color='red')
+            plt.plot([x0, x1], [y0, y1], color=COLOR_GAP)
             i, j = i-1, j
             n_del += 1
         else:
             x1, y1 = j-1, i
-            plt.plot([x0, x1], [y0, y1], color='blue')
+            plt.plot([x0, x1], [y0, y1], color=COLOR_GAP)
             i, j = i, j-1
             n_ins += 1
 
@@ -48,7 +49,9 @@ def visualize(que: str, ref: str, bt: np):
     ax.set_xlabel('Sequence A (len=%d)' % m)
     ax.set_ylabel('Sequence B (len=%d)' % n)
     plt.grid()
-    # plt.legend()
+    plt.plot([0, 0], [0, 0], color=COLOR_GAP, label='indel')
+    plt.plot([0, 0], [0, 0], color=COLOR_DIA, label='mis/match')
+    plt.legend()
     plt.savefig("./gsw_matrix.png")
 
 
