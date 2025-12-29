@@ -1,0 +1,124 @@
+\documentclass[12pt, a4paper, oneside]{ctexart}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{amsmath, amsthm, amssymb}
+\usepackage{graphicx}
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+
+\title{\vspace*{-6em} \textbf{包含拷贝事件的动态规划序列比对}}
+\author{季发虎}
+\date{2025年12月20日}
+
+\begin{document}
+\maketitle
+
+\section{两阶段的动态规划模型}
+Gary Benson的DSI（Duplication Substitution Indel）模型是首个可以拟合生物序列中拷贝变异事件的序列比对模型。给定序列 $A$ 和 $B$，DSI模型的状态递推式为：
+
+\[
+\left\{
+\begin{aligned}
+    E_{i,j} & = \max(E_{i-1,j}, H_{i-1,j} + G_o) + G_e \\
+    F_{i,j} & = \max(F_{i,j-1}, H_{i,j-1} + G_o) + G_e \\
+    M_{i,j} & = \max(H_{i-1,j-1} + \text{mat}(A[i], B[j])) \\
+    D_{i,j} & = \max(H_{i-x,j-y} + \text{dup}(A[i-x:x], B[j-y:y]) + G_e) \\
+    H_{i,j} & = \max(E_{i,j}, F_{i,j}, M_{i,j}, D_{i,j})
+\end{aligned}
+\right.
+\]
+
+其中 $\text{dup}(a, b])$ 表示将序列 $a^{*}$ 比对至序列 $b$，$a^{*}$ 代表 $a$ 重复任意次数。该函数实现方法为全局的wrapround动态规划，时间复杂度为 $O(|a||b|)$。
+
+若序列 $A$ 和 $B$ 的长度分别为 $N$ 和 $M$，则DSI模型的时间复杂度为 $O(N^2M^2)$。鉴于该模型的低扩展性，本项目旨在提出一个平方级时间复杂度的解决方案，包含两个步骤：
+
+\begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
+    \item 对序列进行自比对，以识别序列自身所包含的复制事件。
+    \item 在上一阶段中识别出的重复断点处进行内循环，做wraparound DP来插入复制事件。
+\end{enumerate}
+
+该方案假设序列之间的拷贝数变异仅发生于序列内部的重复断点处。这一假设大幅减少了DSI模型中允许发生重复事件的状态数，有机会使DSI模型在真实长序列上具备实用性。
+
+然而，化简模型必然会损失原始理论的一般性，尤其体现在第一阶段。第一阶段的任务是寻找序列自身的重复事件，然而序列自身的重复存在多种表示形式，当拷贝之间存在差异时，寻找最优的表示形式并不是一个简单问题。我们目前采取的方案是寻找尽可能小的重复单元。这一方面可以缓解表示歧义，另一方面可以增加拷贝断点的数量，以提升第二阶段识别潜在拷贝变异事件的灵敏度。
+
+\section{初步实现}
+
+\textbf{识别序列内重复事件}。令 $F_i$ 为序列 $S[1:i]$ 与自身比对的结果，其中可能包含重复事件，$F_i$ 的转移公式为：
+
+\[
+F_i = \max
+\begin{cases}
+    F_{i-1} + \text{mat}(S[i], S[i])) \\
+    F_j + \text{dup2}(S[k:i], S[j:i-k)) + G_{open} \quad k \in [R_l, R_r], j \in [1, i-k) \\ 
+\end{cases}
+\]
+
+其中，第一行代表来自对角线的自匹配转移，第二行为发生重复变异事件的转移。该方法枚举重复片段的长度（范围 $[R_l, R_r]$ 为外置参数），并尝试将重复单元 $S[k:i]$ 比对至 $S[j:i-k)$。此处的 $\text{dup2}(a,b)$ 为修改之后的global wrapround DP，主要区别在于奖励重复事件的发生。若 $a$ 重复了 $n$ 次，则 $\text{dup2}(a, b) = \text{dup}(a, b) + n G_{dup}$。其中，$G_{dup}$ 为每次复制的奖励分数（默认为1）。与之对应的 $G_{open}$ 则对应着开始这次重复事件的初始罚分（默认为-5）。该方法有如下两个作用：
+
+\begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
+    \item 在自比对与wraparound DP打分矩阵完全相同的情况下，驱离最优路径远离对角线。
+    \item 通过奖励重复次数，该方法偏向长度更小的重复单元，避免歧义表示。
+\end{enumerate}
+
+从序列末尾回溯该动态规划即可得到序列内部所有的重复事件。若 $F_i$ 由 $F_{i-1}$ 转移而来，则该区域为非重复区域。若 $F_i$ 由 $F_j$ 转移而来，则此处一定存在一个重复事件。且该重复事件一定为最优的转移策略，因为$F_j$ 已经考虑了先前所有的重复事件。且由于 $G_{open}$ 的存在，$F_i$ 和 $F_j$ 不可能对应同一个重复事件。
+
+假设重复单元的最大长度为 $L$，序列 $S$ 的长度为 $N$，则该方法在序列的每个位置枚举重复单元长度 $L$ 并做时间复杂度为 $O(NL)$ 的wrapround DP，总时间复杂度为 $O(N^2L^2)$。
+
+在简单的模拟数据（重复单元5-20bp，重复次数10-25，两翼区域20-120bp，拷贝变异率 $\le 5\%$）上测试，该方法可以完全还原出重复区域与非重复区域，并且能够识别出重复单元以及次数（图\ref{fig_stage1}）。
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7 \textwidth]{stage1.png}
+    \caption{自比对识别重复事件}
+    \label{fig_stage1}
+\end{figure}
+
+当前方法的问题在于时间复杂度高，可扩展性较差。但这主要是由 $O(N^2)$ 主导的，重复单元的长度 $L$（一般 $\le 200$ bp）理论上远小于序列长度 $N$。
+
+\textbf{比对两条序列}。在自比对获得重复事件的断点位置后，本方法对DSI模型做以下修改。
+
+\[
+\left\{
+\begin{aligned}
+    E_{i,j} & = \max(E_{i-1,j}, H_{i-1,j} + G_o) + G_e \\
+    F_{i,j} & = \max(F_{i,j-1}, H_{i,j-1} + G_o) + G_e \\
+    M_{i,j} & = \max(H_{i-1,j-1} + \text{mat}(A[i], B[j])) \\
+    D_{i,j} & = \max(H_{i-x,j-y} + \text{dup}(A[i-x:x], B[j-y:y]) + G_e) \\
+    & \quad \quad i-x, j-y \in B \text{: \{break points from stage 1\}} \\
+    H_{i,j} & = \max(E_{i,j}, F_{i,j}, M_{i,j}, D_{i,j})
+\end{aligned}
+\right.
+\]
+
+在两条包含VNTR变异的模拟序列上，图\ref{fig_stage2} 给出了DSI模型的比对结果。该算法的时间复杂度为 $O(NMLB)$，其中SI模型可以通过SIMD，Banded以及Wavefront等算法加速，内层的wrapround可以通过SIMD，Wavefront以及多核心并行加速。
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7 \textwidth]{stage2.png}
+    \caption{DSI模型比对结果}
+    \label{fig_stage2}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.7 \textwidth]{gsw_matrix1.png}
+    \caption{SI模型比对结果}
+    \label{fig_sw}
+\end{figure}
+
+相比不包含重复事件的SI模型，Smith-Waterman算法给出不连续的插入和删除结果，无法真实反应拷贝数变异（图\ref{fig_sw}）。
+
+该方法在真实数据上的表现有待测试。
+
+\section{讨论}
+
+目前所实现的第一阶段算法与前期讨论的D转移策略并不一致，这主要是因为D转移的正确性或正确实现D转移的复杂性有待讨论。
+
+\begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
+    \item D转移提供的通道不具备一致性，即无法约束重复单元，识别不出与上述算法一致的最优重复。
+    \item 零花费从后向前转移，可能导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。也就是，一次计算未能达到最优，再次循环更新会产生新的结果。此处请参考wrapround论文，文中重点讨论了不同周期之间状态转移的正确性：第二轮更新时，只有匹配+删除才会产生更优的结果。
+    \item 也许以上错误可以通过规则约束实现，但正确的约束可能并不简单，这损害了理论算法的简洁性。
+\end{enumerate}
+
+最后附上我的个人建议。第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现，这将大幅增加算法的效率和可优化空间。
+
+\end{document}
