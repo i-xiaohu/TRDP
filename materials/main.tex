@@ -1,11 +1,28 @@
-\documentclass[12pt, a4paper, oneside]{ctexart}
+\documentclass[12pt, a4paper, oneside]{article}
+\usepackage[UTF8]{ctex}
 \usepackage{titlesec}
 \usepackage{enumitem}
 \usepackage{amsmath, amsthm, amssymb}
 \usepackage{graphicx}
-\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,     % Enable colored links
+    linkcolor=blue,      % Color for normal internal links
+    citecolor=black,     % Color for citations
+    filecolor=black,     % Color for file links
+    urlcolor=black,      % Color for URLs
+    pdfborder={0 0 0}    % No border around links
+}
+\usepackage{geometry}
+\geometry{
+    top=1.5cm,
+    bottom=1.5cm,
+    left=2cm,
+    right=2cm
+}
 
-\title{\vspace*{-6em} \textbf{包含拷贝事件的动态规划序列比对}}
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+\title{\textbf{包含拷贝事件的动态规划序列比对}}
 \author{季发虎}
 \date{2025年12月20日}
 
@@ -13,7 +30,7 @@
 \maketitle
 
 \section{两阶段的动态规划模型}
-Gary Benson的DSI（Duplication Substitution Indel）模型是首个可以拟合生物序列中拷贝变异事件的序列比对模型。给定序列 $A$ 和 $B$，DSI模型的状态递推式为：
+Gary Benson的DSI（Duplication Substitution Indel）[\ref{gary_1997}] 模型是首个可以拟合生物序列中拷贝变异事件的序列比对模型。给定序列 $A$ 和 $B$，DSI模型的状态递推式为：
 
 \[
 \left\{
@@ -27,7 +44,7 @@ Gary Benson的DSI（Duplication Substitution Indel）模型是首个可以拟合
 \right.
 \]
 
-其中 $\text{dup}(a, b])$ 表示将序列 $a^{*}$ 比对至序列 $b$，$a^{*}$ 代表 $a$ 重复任意次数。该函数实现方法为全局的wrapround动态规划，时间复杂度为 $O(|a||b|)$。
+其中 $\text{dup}(a, b])$ 表示将序列 $a^{*}$ 比对至序列 $b$，$a^{*}$ 代表 $a$ 重复任意次数。该函数实现方法为全局的wrapround动态规划[\ref{wraparound}]，时间复杂度为 $O(|a||b|)$。
 
 若序列 $A$ 和 $B$ 的长度分别为 $N$ 和 $M$，则DSI模型的时间复杂度为 $O(N^2M^2)$。鉴于该模型的低扩展性，本项目旨在提出一个平方级时间复杂度的解决方案，包含两个步骤：
 
@@ -63,14 +80,14 @@ F_i = \max
 
 假设重复单元的最大长度为 $L$，序列 $S$ 的长度为 $N$，则该方法在序列的每个位置枚举重复单元长度 $L$ 并做时间复杂度为 $O(NL)$ 的wrapround DP，总时间复杂度为 $O(N^2L^2)$。
 
-在简单的模拟数据（重复单元5-20bp，重复次数10-25，两翼区域20-120bp，拷贝变异率 $\le 5\%$）上测试，该方法可以完全还原出重复区域与非重复区域，并且能够识别出重复单元以及次数（图\ref{fig_stage1}）。
-
 \begin{figure}[h!]
     \centering
     \includegraphics[width=0.7 \textwidth]{stage1.png}
     \caption{自比对识别重复事件}
     \label{fig_stage1}
 \end{figure}
+
+在简单的模拟数据（重复单元5-20bp，重复次数10-25，两翼区域20-120bp，拷贝变异率 $\le 5\%$）上测试，该方法可以完全还原出重复区域与非重复区域，并且能够识别出重复单元以及次数（图\ref{fig_stage1}）。
 
 当前方法的问题在于时间复杂度高，可扩展性较差。但这主要是由 $O(N^2)$ 主导的，重复单元的长度 $L$（一般 $\le 200$ bp）理论上远小于序列长度 $N$。
 
@@ -115,10 +132,19 @@ F_i = \max
 
 \begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
     \item D转移提供的通道不具备一致性，即无法约束重复单元，识别不出与上述算法一致的最优重复。
-    \item 零花费从后向前转移，可能导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。也就是，一次计算未能达到最优，再次循环更新会产生新的结果。此处请参考wrapround论文，文中重点讨论了不同周期之间状态转移的正确性：第二轮更新时，只有匹配+删除才会产生更优的结果。
+    \item 零花费从后向前转移，导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。也就是，一次计算未能达到最优，再次循环更新会产生新的结果。此处请参考wrapround论文[\ref{wraparound}]，文中重点讨论了不同周期之间状态转移的正确性：第二轮更新时，只有匹配+删除才会产生更优的结果。
     \item 也许以上错误可以通过规则约束实现，但正确的约束可能并不简单，这损害了理论算法的简洁性。
 \end{enumerate}
 
-最后附上我的个人建议。第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现，这将大幅增加算法的效率和可优化空间。
+最后附上我的个人建议。第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现[\ref{gad_2001}, \ref{michael_1984}]，这将大幅增加算法的效率和可优化空间。
+
+\section{参考文献}
+
+\begin{enumerate}
+    \item Gary Benson. 1997. Sequence alignment with tandem duplication. \label{gary_1997}
+    \item Vincent A. Fischetti, Gad M. Landau, Jeanette P. Schmidt and Peter H. Sellers. 1992. Identifying periodic occurrences of a template with applications to protein structure. \label{wraparound}
+    \item Gad M. Landau, Jeanette P. Schmidt and Dina Sokol. 2001. An algorithm for approximate tandem repeats. \label{gad_2001}
+    \item Michael G. Main and Richard J. Lorentz. 1984. An O (n log n) algorithm for finding all repetitions in a string. \label{michael_1984}
+\end{enumerate}
 
 \end{document}
