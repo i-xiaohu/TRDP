@@ -2,7 +2,6 @@
 // Created by ixiaohu on 2025/12/30.
 //
 
-#include "trdp.h"
 #include <vector>
 #include <cstdint>
 #include <cstdio>
@@ -71,12 +70,14 @@ void solve(int n, const char *seq)
 	for (int i = 1; i <= n; i++) {
 		H[i][0] = E[i][0] = open_gap_penalty + extend_gap_penalty * i;
 		for (int j = 1; j < i; j++) {
-			F[i][j] = min(H[i][j-1] + open_gap_penalty, F[i][j-1]) + extend_gap_penalty;
-			E[i][j] = min(H[i-1][j] + open_gap_penalty, E[i-1][j]) + extend_gap_penalty;
+			F[i][j] = max(H[i][j-1] + open_gap_penalty, F[i][j-1]) + extend_gap_penalty;
+			E[i][j] = max(H[i-1][j] + open_gap_penalty, E[i-1][j]) + extend_gap_penalty;
 			int M = H[i-1][j-1] + (seq[i-1] == seq[j-1] ?match_score :mismatch_penalty);
-			H[i][j] = min(E[i][j], F[i][j]);
-			H[i][j] = min(H[i][j], M);
+			H[i][j] = max(E[i][j], F[i][j]);
+			H[i][j] = max(H[i][j], M);
 		}
+		H[i][i] = max(H[i][i-1] + open_gap_penalty, F[i][i-1]) + extend_gap_penalty;
+		H[i][i] = max(H[i-1][i-1] + match_score, H[i][i]);
 	}
 	for (int i = 0; i <= n; i++) {
 		for (int j = 0; j <= i; j++) {
@@ -96,6 +97,8 @@ int main(int argc, char *argv[]) {
 	TestEntity te = input_csv_test_seq(id, fn);
 	fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
 		 te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
-	fprintf(stdout, "motif_len=%ld, seq_len=%ld", te.motif.length(), te.seq.length());
+	fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
+
+	solve(te.seq.length(), te.seq.c_str());
 	return 0;
 }
