@@ -10,6 +10,8 @@
 #include <cassert>
 #include <sstream>
 #include <iostream>
+#include <getopt.h>
+
 using namespace std;
 
 struct TestEntity {
@@ -48,24 +50,48 @@ TestEntity input_csv_test_seq(int n, const char *fn)
 	return TestEntity{motif, period, mutation, flank_l, flank_r, seq};
 }
 
+// TRDP parameters
+struct TrdpOptions {
+	// Minimum repeat unit size
+	int min_unit_size;
+	// Scoring matrix for self-alignment
+	int mat_score;
+	int mis_pen;
+	int gap_o;
+	int gap_e;
+	// Scoring matrix for duplication (reward more and/or penalize less than normal matrix)
+	int rep_mat_score;
+	int rep_mis_pen;
+	int rep_gap_o;
+	int rep_gap_e;
+	// It is necessary to penalize
+	int open_rep_pen;
+	int close_rep_pen;
+
+	TrdpOptions() {
+		min_unit_size = 5;
+		mat_score = 1;
+		mis_pen = -4;
+		gap_o = -6;
+		gap_e = -1;
+		// TODO: would it be too lenient for sub-matrix?
+		rep_mat_score = 2;
+		rep_mis_pen = -3;
+		rep_gap_o = -3;
+		rep_gap_e = -1;
+		open_rep_pen = -2;
+		close_rep_pen = -4; // TODO: penalize it harder
+	}
+};
+
 const int INF = 100000000;
-
-const int MIN_UNIT = 5; // Minimum repeat unit size
-const int MAT_SCORE = 1;
-const int RMAT_SCORE = 2; // FIXME: would it be too large?
-const int MIS_PEN = -4;
-const int GAP_O = -6;
-const int GAP_E = -1;
-const int OPEN_REP = -2; //
-const int CLOSE_REP = -4; // TODO: penalize it harder
-
 const int NORMAL = 0;
 const int START_REP = 1;
 const int NEW_COPY = 2;
 const int WITHIN_REP = 3;
 const int END_REP = 4;
 
-int VERBOSE = 0;
+int DEBUG = 0;
 
 struct DpCell {
 	int E, F, H; // The original SW matrix
@@ -85,8 +111,20 @@ struct DpCell {
 	}
 };
 
-void solve(int n, const char *seq, const string &out_fn)
+void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_fn)
 {
+	const int MAT_SCORE = o.mat_score;
+	const int MIS_PEN = o.mis_pen;
+	const int GAP_O = o.gap_o;
+	const int GAP_E = o.gap_e;
+	const int MIN_UNIT = o.min_unit_size;
+	const int OPEN_REP = o.open_rep_pen;
+	const int CLOSE_REP = o.close_rep_pen;
+	const int RMAT_SCORE = o.rep_mat_score;
+	const int RMIS_PEN = o.rep_mis_pen;
+	const int RGAP_O = o.rep_gap_o;
+	const int RGAP_E = o.rep_gap_e;
+
 	vector<vector<DpCell>> dp;
 	dp.resize(n + 1);
 	for (int i = 0; i <= n; i++) {
@@ -149,7 +187,7 @@ void solve(int n, const char *seq, const string &out_fn)
 					event = NEW_COPY;
 				}
 			}
-			if (VERBOSE) {
+			if (DEBUG) {
 				if (D_from == i - 1) {
 					printf("i=%d, Start copy, D_from=%d, max=%d\n", i, D_from, max_value);
 				} else {
@@ -160,7 +198,7 @@ void solve(int n, const char *seq, const string &out_fn)
 			if (event == START_REP) {
 				// Open duplication
 				for (int j = 1; j <= D_from - MIN_UNIT + 1; j++) {
-					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN) + OPEN_REP;
+					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN) + OPEN_REP;
 					dp[i][j].D_gate = max_value + tmp;
 					dp[i][j].C_from = j;
 					dp[i][j].D_from = D_from;
@@ -173,7 +211,7 @@ void solve(int n, const char *seq, const string &out_fn)
 				assert(C_from > 0);
 				for (int j = C_from; j <= D_from - MIN_UNIT + 1; j++) {
 					// No penalty for new copy
-					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN);
+					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN);
 					dp[i][j].D_gate = max_value + tmp;
 					dp[i][j].C_from = C_from;
 					dp[i][j].D_from = D_from;
@@ -186,12 +224,12 @@ void solve(int n, const char *seq, const string &out_fn)
 
 		// Repetition alignment starting from D gates
 		for (int j = 1; j < i; j++) {
-			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + GAP_O, dp[i-1][j].de) + GAP_E;
+			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + RGAP_O, dp[i-1][j].de) + RGAP_E;
 			int h_score = -INF;
 			int d_score = -INF;
-			int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN);
+			int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN);
 			if (j <= dp[i][j-1].D_from) {
-				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + GAP_O, dp[i][j-1].df) + GAP_E;
+				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + RGAP_O, dp[i][j-1].df) + RGAP_E;
 				d_score = max(dp[i-1][j-1].D_gate, dp[i-1][j-1].dh) + tmp;
 			}
 			DpCell backup = dp[i][j];
@@ -219,6 +257,7 @@ void solve(int n, const char *seq, const string &out_fn)
 				dp[i][j].pj = j-1;
 				dp[i][j].event = WITHIN_REP;
 			}
+			// D gate opens again after sub-matrix calculation
 			if (dp[i][j].D_gate > dp[i][j].dh) {
 				dp[i][j] = backup;
 			}
@@ -243,73 +282,142 @@ void solve(int n, const char *seq, const string &out_fn)
 
 	// Trace back the optimal path
 	int ptr_i = n, ptr_j = n;
+	int rep_cnt = 0;
 	while (ptr_i > 0 and ptr_j > 0) {
 		const DpCell &t = dp[ptr_i][ptr_j];
 		if (t.event == END_REP) {
 			assert(ptr_i == ptr_j); // Only main diagonal closes repetitions
-			fprintf(stderr, "(%d,%d) -> Diagonal(%d)\n", t.pi, t.pj, ptr_i);
+			fprintf(stderr, "Close: %d -> %d (Diagonal)\n", t.pj, ptr_i);
 		} else if (t.event == START_REP) {
-			fprintf(stderr, "Diagonal(%d) -> (%d, %d)\n", t.D_from, ptr_i, ptr_j);
+			fprintf(stderr, "Open: %d (Diagonal) -> %d, unit_size=%d\n", ptr_j, t.pj, t.pj - ptr_j + 1);
+			rep_cnt++;
 		} else if (t.event == NEW_COPY) {
-			fprintf(stderr, "New copy found at (%d, %d)\n", ptr_i, ptr_j);
+			fprintf(stderr, "Copy: %d (i=%d) -> %d, unit_size=%d\n", ptr_j, ptr_i, t.pj, t.pj - ptr_j + 1);
+			rep_cnt++;
 		}
 		ptr_i = t.pi;
 		ptr_j = t.pj;
 	}
+	fprintf(stderr, "Found %d duplications\n", rep_cnt);
 
-	ofstream out(out_fn);
-	assert(out.is_open());
-	for (int i = 0; i <= n; i++) {
-		if (i == 0) out << "0";
-		else out << "," << i << "(" << seq[i-1] << ")";
-	}
-	out << endl;
-	for (int i = 0; i <= n; i++) {
-		if (i > 0) out << seq[i-1];
-		else out << 0;
-		for (int j = 1; j <= i; j++) {
-			out << ",";
-			switch (dp[i][j].event) {
-				case NORMAL:
-					out << dp[i][j].H;
-					break;
-				case START_REP:
-					out << dp[i][j].D_gate << " D " << dp[i][j].D_from;
-					break;
-				case NEW_COPY:
-					out << dp[i][j].dh << " C " << dp[i][j].D_from;
-					break;
-				case WITHIN_REP:
-					out << dp[i][j].dh << " W ";
-					break;
-				case END_REP:
-					out << dp[i][j].H << " B " << dp[i][j].pj;
-					break;
-				default:
-					abort();
-			}
-		}
-		for (int j = i+1; j <= n; j++) {
-			out << ",";
+	if (DEBUG) {
+		ofstream out(out_fn);
+		assert(out.is_open());
+		for (int i = 0; i <= n; i++) {
+			if (i == 0) out << "0";
+			else out << "," << i << "(" << seq[i-1] << ")";
 		}
 		out << endl;
+		for (int i = 0; i <= n; i++) {
+			if (i > 0) out << seq[i-1];
+			else out << 0;
+			for (int j = 1; j <= i; j++) {
+				out << ",";
+				switch (dp[i][j].event) {
+					case NORMAL:
+						out << dp[i][j].H;
+						break;
+					case START_REP:
+						out << dp[i][j].D_gate << " D " << dp[i][j].D_from;
+						break;
+					case NEW_COPY:
+						out << dp[i][j].dh << " C " << dp[i][j].D_from;
+						break;
+					case WITHIN_REP:
+						out << dp[i][j].dh << " W ";
+						break;
+					case END_REP:
+						out << dp[i][j].H << " B " << dp[i][j].pj;
+						break;
+					default:
+						abort();
+				}
+			}
+			for (int j = i+1; j <= n; j++) {
+				out << ",";
+			}
+			out << endl;
+		}
+		out.close();
 	}
-	out.close();
+}
+
+int usage(const TrdpOptions &o) {
+	fprintf(stderr, "Usage: TRDP [options] <CSV> <ID>\n");
+	fprintf(stderr, "  Self-Alignment Options:\n");
+	fprintf(stderr, "    -A [INT]  match score [%d]\n", o.mat_score);
+	fprintf(stderr, "    -B [INT]  mismatch penalty [%d]\n", o.mis_pen);
+	fprintf(stderr, "    -O [INT]  open gap(indel) penalty [%d]\n", o.gap_o);
+	fprintf(stderr, "    -E [INT]  extend gap penalty [%d]\n", o.gap_e);
+	fprintf(stderr, "  Duplication Alignment Options:\n");
+	fprintf(stderr, "    -u [INT]  minimum repeat unit size [%d]\n", o.min_unit_size);
+	fprintf(stderr, "    -d [INT]  open duplication penalty [%d]\n", o.open_rep_pen);
+	fprintf(stderr, "    -p [INT]  close duplication penalty [%d]\n", o.close_rep_pen);
+	fprintf(stderr, "    -a [INT]  match score [%d]\n", o.rep_mat_score);
+	fprintf(stderr, "    -b [INT]  mismatch penalty [%d]\n", o.rep_mis_pen);
+	fprintf(stderr, "    -o [INT]  open gap(indel) penalty [%d]\n", o.rep_gap_o);
+	fprintf(stderr, "    -e [INT]  extend gap penalty [%d]\n", o.rep_gap_e);
+	fprintf(stderr, "Note: duplication scoring matrix must reward more and/or \n"
+				    "  penalize less than self-alignment matrix to drive out duplication events.\n");
+	return 1;
+}
+
+static inline int str2int(const char* s) {
+	return (int)strtol(s, nullptr, 10);
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 3) {
-		fprintf(stderr, "TRDP <CSV> <ID>\n");
-		return 1;
+	int c;
+	TrdpOptions opt;
+	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:")) >= 0) {
+		switch (c) {
+			case 'A':
+				opt.mat_score = str2int(optarg);
+				break;
+			case 'B':
+				opt.mis_pen = str2int(optarg);
+				break;
+			case 'O':
+				opt.gap_o = str2int(optarg);
+				break;
+			case 'E':
+				opt.gap_e = str2int(optarg);
+				break;
+			case 'u':
+				opt.min_unit_size = str2int(optarg);
+				break;
+			case 'd':
+				opt.open_rep_pen = str2int(optarg);
+				break;
+			case 'p':
+				opt.close_rep_pen = str2int(optarg);
+				break;
+			case 'a':
+				opt.rep_mat_score = str2int(optarg);
+				break;
+			case 'b':
+				opt.rep_mis_pen = str2int(optarg);
+				break;
+			case 'o':
+				opt.rep_gap_o = str2int(optarg);
+				break;
+			case 'e':
+				opt.rep_gap_e = str2int(optarg);
+				break;
+			default:
+				fprintf(stderr, "Unrecognized option `%c`\n", c);
+				return usage(opt);
+		}
 	}
-	const char *fn = argv[1];
-	int id = atoi(argv[2]);
+	if (argc - optind != 2) return usage(opt);
+	const char *fn = argv[optind];
+	int id = str2int(argv[optind + 1]);
 	TestEntity te = input_csv_test_seq(id, fn);
 	fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
 		 te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
 	fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
 
 	string out_fn = "../self_" + string(argv[2]) + ".csv";
-	solve(te.seq.length(), te.seq.c_str(), out_fn);
+	trdp_core(opt, te.seq.length(), te.seq.c_str(), out_fn);
 	return 0;
 }
