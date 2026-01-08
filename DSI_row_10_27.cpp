@@ -3,6 +3,53 @@
 #include <string.h>
 #include <math.h>
 
+#include <vector>
+#include <cstdint>
+#include <cstdio>
+#include <string>
+#include <fstream>
+#include <cassert>
+#include <sstream>
+#include <iostream>
+#include <getopt.h>
+using namespace std;
+
+struct TestEntity {
+	string motif;
+	int period;
+	int mutation;
+	int flank_l;
+	int flank_r;
+	string seq;
+};
+
+TestEntity input_csv_test_seq(int n, const char *fn)
+{
+	ifstream in(fn);
+	assert(in.is_open());
+	string line;
+	getline(in, line); // Header
+	for (int i = 0; i < n-1; i++) {
+		getline(in, line);
+	}
+	getline(in, line);
+	for (char &a : line) {
+		if (a == ',') {
+			a = ' ';
+		}
+	}
+	stringstream ss(line);
+	int id; ss >> id;
+	string motif; ss >> motif;
+	int period; ss >> period;
+	int mutation; ss >> mutation;
+	int flank_l; ss >> flank_l;
+	int flank_r; ss >> flank_r;
+	string seq; ss >> seq;
+	in.close();
+	return TestEntity{motif, period, mutation, flank_l, flank_r, seq};
+}
+
 typedef struct {
     int w; // 0: 向下, 1: 斜下, 2: 向右, 3: D走位
     int last_i;
@@ -27,10 +74,19 @@ int tran(char a) {
     return -1;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+	const char *fn = argv[optind];
+	int id = atoi(argv[optind + 1]);
+	TestEntity te = input_csv_test_seq(id, fn);
+	fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
+	        te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
+	fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
+	const char *s1_buf = te.seq.c_str();
+	const char *s2_buf = te.seq.c_str();
+
     /* --- 输入序列（这里用固定字符串，若要从 stdin 读可改为 fgets/scanf） --- */
-    char s1_buf[] = "ATCGGAATCGGAATCGGAGGTTTACCCTAAGGTTTACCCTAA";
-    char s2_buf[] = "ATCGGAATCGGAATCGGAGGTTTACCCTAAGGTTTACCCTAA";
+//    char s1_buf[] = "ATCGGAATCGGAATCGGAGGTTTACCCTAAGGTTTACCCTAA";
+//    char s2_buf[] = "ATCGGAATCGGAATCGGAGGTTTACCCTAAGGTTTACCCTAA";
     /* 也可以用 scanf 从键盘读入：
        char s1_buf[1000], s2_buf[1000];
        scanf("%999s %999s", s1_buf, s2_buf);
@@ -59,7 +115,7 @@ int main() {
 
     /* dp 数组大小（原程序使用 100x100），这里同样固定上限 100。
        若序列更长，请调大 MAXN */
-    #define MAXN 200
+    #define MAXN 1000
     static Node dp[MAXN][MAXN];
     static int pathm[MAXN][MAXN];
 
@@ -222,23 +278,23 @@ int main() {
         }
     }
 
-    /* 输出最终得分矩阵（数值） */
-    printf("最终得分矩阵为\n");
-    for (int i = 0; i <= m; ++i) {
-        for (int j = 0; j <= n; ++j) {
-            printf("%d ", dp[i][j].v);
-        }
-        printf("\n");
-    }
-
-    /* 输出路径标记 w */
-    printf("输出标记的路径（w 值）:\n");
-    for (int i = 0; i <= m; ++i) {
-        for (int j = 0; j <= n; ++j) {
-            printf("%d ", dp[i][j].w);
-        }
-        printf("\n");
-    }
+//    /* 输出最终得分矩阵（数值） */
+//    printf("最终得分矩阵为\n");
+//    for (int i = 0; i <= m; ++i) {
+//        for (int j = 0; j <= n; ++j) {
+//            printf("%d ", dp[i][j].v);
+//        }
+//        printf("\n");
+//    }
+//
+//    /* 输出路径标记 w */
+//    printf("输出标记的路径（w 值）:\n");
+//    for (int i = 0; i <= m; ++i) {
+//        for (int j = 0; j <= n; ++j) {
+//            printf("%d ", dp[i][j].w);
+//        }
+//        printf("\n");
+//    }
 
     /* 找最大累计分值的位置（原代码遍历所有格） */
     int temp = dp[0][0].v;
@@ -283,31 +339,31 @@ int main() {
     }
 
     /* 打印 pathm */
-    printf("pathm matrix:\n");
-    for (int i = 0; i <= m; ++i) {
-        for (int j = 0; j <= n; ++j) {
-            printf("%d ", pathm[i][j]);
-        }
-        printf("\n");
-    }
+//    printf("pathm matrix:\n");
+//    for (int i = 0; i <= m; ++i) {
+//        for (int j = 0; j <= n; ++j) {
+//            printf("%d ", pathm[i][j]);
+//        }
+//        printf("\n");
+//    }
 
     /* 打印带星号的矩阵到屏幕 */
-    printf("最终得分矩阵（含*表示路径）:\n\t");
-    for (int j = 1; j <= n; ++j) printf("%c\t", s2_buf[j-1]);
-    printf("\n");
-    for (int i = 0; i <= m; ++i) {
-        if (i == 0) printf("\t");
-        else printf("%c\t", s1_buf[i-1]);
-        for (int j = 0; j <= n; ++j) {
-            if (pathm[i][j]) printf("%d*", dp[i][j].v);
-            else printf("%d", dp[i][j].v);
-            printf("\t");
-        }
-        printf("\n");
-    }
+//    printf("最终得分矩阵（含*表示路径）:\n\t");
+//    for (int j = 1; j <= n; ++j) printf("%c\t", s2_buf[j-1]);
+//    printf("\n");
+//    for (int i = 0; i <= m; ++i) {
+//        if (i == 0) printf("\t");
+//        else printf("%c\t", s1_buf[i-1]);
+//        for (int j = 0; j <= n; ++j) {
+//            if (pathm[i][j]) printf("%d*", dp[i][j].v);
+//            else printf("%d", dp[i][j].v);
+//            printf("\t");
+//        }
+//        printf("\n");
+//    }
 
     /* 输出 CSV 文件（final.csv）*/
-    FILE *fout = fopen("final.csv", "w");
+    FILE *fout = fopen("../final.csv", "w");
     if (fout) {
         fprintf(fout, ",");
         for (int j = 1; j <= n; ++j) {
@@ -318,7 +374,7 @@ int main() {
         for (int i = 0; i <= m; ++i) {
             if (i == 0) fprintf(fout, ",");
             else fprintf(fout, "%c,", s1_buf[i-1]);
-            for (int j = 0; j <= n; ++j) {
+            for (int j = 1; j <= n; ++j) {
                 if (pathm[i][j]) fprintf(fout, "%d*", dp[i][j].v);
                 else fprintf(fout, "%d", dp[i][j].v);
                 if (j != n) fprintf(fout, ",");
@@ -326,7 +382,7 @@ int main() {
             fprintf(fout, "\n");
         }
         fclose(fout);
-        printf("Wrote final.csv\n");
+//        printf("Wrote final.csv\n");
     } else {
         fprintf(stderr, "Failed to open final.csv for writing\n");
     }
