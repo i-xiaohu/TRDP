@@ -48,173 +48,176 @@ TestEntity input_csv_test_seq(int n, const char *fn)
 	return TestEntity{motif, period, mutation, flank_l, flank_r, seq};
 }
 
-const int NORMAL = 0;
-const int WITHIN_REP = 1;
-const int START_REP = 2;
-const int END_REP = 3;
+const int INF = 100000000;
 
-struct BackTrace {
-	int x, y;
-	int t; // 0: normal DP; 1: within rep; 2: start of rep; 3: end of rep
-	BackTrace() { x = y = t = -1; }
-	BackTrace(int xx, int yy, int tt): x(xx), y(yy), t(tt) {}
+const int MIN_UNIT = 5; // Minimum repeat unit size
+const int MAT_SCORE = 1;
+const int RMAT_SCORE = 2; // FIXME: would it be too large?
+const int MIS_PEN = -4;
+const int GAP_O = -6;
+const int GAP_E = -1;
+const int OPEN_REP = -2; //
+const int CLOSE_REP = -4; // TODO: penalize it harder
+
+const int NORMAL = 0;
+const int START_REP = 1;
+const int NEW_COPY = 2;
+const int WITHIN_REP = 3;
+const int END_REP = 4;
+
+struct DpCell {
+	int E, F, H; // The original SW matrix
+	int D_gate; // Gate of duplication
+	int D_from; // Where duplication starts
+	int de, df, dh; // Sub matrix of duplication
+	int pi, pj, event; // Backtrace
+
+	DpCell() {
+		E = F = H = -INF;
+		D_gate = -INF;
+		D_from = -1;
+		de = df = dh = -INF;
+		pi = pj = event = -1;
+	}
 };
 
 void solve(int n, const char *seq, const string &out_fn)
 {
-	const int INF = 100000000;
-	const int MIN_UNIT = 5; // Minimum repeat unit size
-	const int match_score = 1;
-	const int mismatch_penalty = -4;
-	const int open_gap_penalty = -6;
-	const int extend_gap_penalty = -1;
-	const int open_rep = -4;
-	const int close_rep = -4;
-	vector<vector<int>> E;
-	vector<vector<int>> F;
-	vector<vector<int>> H;
-	vector<vector<int>> D; // Start of duplications
-	vector<vector<int>> GE, GF, GH; // Alignment of duplications
-	vector<vector<BackTrace>> bt;
-	vector<vector<BackTrace>> dbt;
-	E.resize(n + 1);
-	F.resize(n + 1);
-	H.resize(n + 1);
-	D.resize(n + 1);
-	GE.resize(n + 1);
-	GF.resize(n + 1);
-	GH.resize(n + 1);
-	bt.resize(n + 1);
-	dbt.resize(n + 1);
+	vector<vector<DpCell>> dp;
+	dp.resize(n + 1);
 	for (int i = 0; i <= n; i++) {
-		E[i].resize(i + 1, -INF);
-		F[i].resize(i + 1, -INF);
-		H[i].resize(i + 1, -INF);
-		D[i].resize(i + 1, -INF);
-		GE[i].resize(i + 1, -INF);
-		GF[i].resize(i + 1, -INF);
-		GH[i].resize(i + 1, -INF);
-		bt[i].resize(i + 1);
-		dbt[i].resize(i + 1);
+		dp[i].resize(i + 1);
 	}
 	// Global alignment in left-down triangle
-	H[0][0] = 0;
+	dp[0][0].H = 0;
 	for (int i = 1; i <= n; i++) {
-		H[i][0] = E[i][0] = open_gap_penalty + extend_gap_penalty * i;
+		dp[i][0].E = dp[i][0].H = GAP_O + GAP_E * i;
 		for (int j = 1; j < i; j++) {
-			F[i][j] = max(H[i][j-1] + open_gap_penalty, F[i][j-1]) + extend_gap_penalty;
-			E[i][j] = max(H[i-1][j] + open_gap_penalty, E[i-1][j]) + extend_gap_penalty;
-			int M = H[i-1][j-1] + (seq[i-1] == seq[j-1] ?match_score :mismatch_penalty);
-			if (E[i][j] > H[i][j]) {
-				H[i][j] = E[i][j];
-				bt[i][j] = BackTrace(i-1, j, NORMAL);
+			dp[i][j].E = max(dp[i-1][j].H + GAP_O, dp[i-1][j].E) + GAP_E;
+			dp[i][j].F = max(dp[i][j-1].H + GAP_O, dp[i][j-1].F) + GAP_E;
+			int M = dp[i-1][j-1].H + (seq[i-1] == seq[j-1] ? MAT_SCORE : MIS_PEN);
+			if (dp[i][j].E > dp[i][j].H) {
+				dp[i][j].H = dp[i][j].E;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j;
+				dp[i][j].event = NORMAL;
 			}
-			if (F[i][j] > H[i][j]) {
-				H[i][j] = F[i][j];
-				bt[i][j] = BackTrace(i, j-1, NORMAL);
+			if (dp[i][j].F > dp[i][j].H) {
+				dp[i][j].H = dp[i][j].F;
+				dp[i][j].pi = i;
+				dp[i][j].pj = j-1;
+				dp[i][j].event = NORMAL;
 			}
-			if (M > H[i][j]) {
-				H[i][j] = M;
-				bt[i][j] = BackTrace(i-1, j-1, NORMAL);
+			if (M > dp[i][j].H) {
+				dp[i][j].H = M;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j-1;
+				dp[i][j].event = NORMAL;
 			}
 		}
-		int f = max(H[i][i-1] + open_gap_penalty, F[i][i-1]) + extend_gap_penalty;
-		int m = H[i-1][i-1] + match_score;
-		if (f > H[i][i]) {
-			H[i][i] = f;
-			bt[i][i] = BackTrace(i, i-1, NORMAL);
+		int f = max(dp[i][i-1].H + GAP_O, dp[i][i-1].F) + GAP_E;
+		int m = dp[i-1][i-1].H + MAT_SCORE;
+		if (f > dp[i][i].H) {
+			dp[i][i].H = f;
+			dp[i][i].pi = i;
+			dp[i][i].pj = i-1;
+			dp[i][i].event = NORMAL;
 		}
-		if (m > H[i][i]) {
-			H[i][i] = m;
-			bt[i][i] = BackTrace(i-1, i-1, NORMAL);
-		}
-
-		if (i >= MIN_UNIT + 1) {
-			// D comes from the max H value in last row
-			// FIXME: is it correct to calculate D this way?
-			int max_value = INT32_MIN, max_id = -1;
-			for (int j = 0; j <= i-1; j++) {
-				if (H[i-1][j] > max_value) {
-					max_value = H[i-1][j];
-					max_id = j;
-				}
-				if (GH[i-1][j] > max_value) {
-					max_value = GH[i-1][j];
-					max_id = j;
-				}
-			}
-			for (int j = 0; j <= max_id - MIN_UNIT + 1; j++) {
-				D[i][j] = max_value + open_rep + (seq[i-1] == seq[j-1] ?match_score * 2 :mismatch_penalty);
-				dbt[i][j] = BackTrace(i-1, max_id, START_REP);
-			}
+		if (m > dp[i][i].H) {
+			dp[i][i].H = m;
+			dp[i][i].pi = i-1;
+			dp[i][i].pj = i-1;
+			dp[i][i].event = NORMAL;
 		}
 
-		// Alignment starting from D
+		if (i > MIN_UNIT) {
+			// D gate comes from the last row
+			int max_value = dp[i-1][i-1].H; // Diagonal must be the maximum in regular matrix
+			int from = i-1;
+			int event = START_REP;
+			for (int j = 1; j < i-1; j++) {
+				if (dp[i-1][j].dh > max_value) { // If multiple maximums exist, choose the first one
+					max_value = dp[i-1][j].dh;
+					from = j;
+					event = NEW_COPY;
+				}
+			}
+			// 0 is excluded because a match/mismatch is mandatory
+			for (int j = 1; j <= from - MIN_UNIT + 1; j++) {
+				// No penalty for new copy
+				int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN) + (event == START_REP ?OPEN_REP :0);
+				dp[i][j].D_gate = max_value + tmp;
+				dp[i][j].D_from = from;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = from;
+				dp[i][j].event = event;
+			}
+		}
+
+		// Repetition alignment starting from D gates
 		for (int j = 1; j < i; j++) {
-			GE[i][j] = max(D[i-1][j] + open_gap_penalty, GE[i-1][j]) + extend_gap_penalty;
-			GF[i][j] = max(D[i][j-1] + open_gap_penalty, GF[i][j-1]) + extend_gap_penalty;
-			int GM = max(GH[i-1][j-1], D[i-1][j-1]) + (seq[i-1] == seq[j-1] ?match_score * 2 :mismatch_penalty);
-			if (GE[i][j] > GH[i][j]) {
-				GH[i][j] = GE[i][j];
-				dbt[i][j] = BackTrace(i-1, j, WITHIN_REP);
+			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + GAP_O, dp[i-1][j].de) + GAP_E;
+			int h_score = -INF;
+			int d_score = -INF;
+			int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN);
+			if (j <= dp[i][j-1].D_from) {
+				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + GAP_O, dp[i][j-1].df) + GAP_E;
+				d_score = max(dp[i-1][j-1].D_gate, dp[i-1][j-1].dh) + tmp;
 			}
-			if (GF[i][j] > GH[i][j]) {
-				GH[i][j] = GF[i][j];
-				dbt[i][j] = BackTrace(i, j-1, WITHIN_REP);
+			if (v_score > dp[i][j].dh) {
+				dp[i][j].dh = v_score;
+				dp[i][j].D_from = dp[i-1][j].D_from;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j;
+				dp[i][j].event = WITHIN_REP;
 			}
-			if (GM > GH[i][j]) {
-				GH[i][j] = GM;
-				dbt[i][j] = BackTrace(i-1, j-1, WITHIN_REP);
+			if (h_score > dp[i][j].dh) {
+				dp[i][j].dh = h_score;
+				dp[i][j].D_from = dp[i][j-1].D_from;
+				dp[i][j].pi = i;
+				dp[i][j].pj = j-1;
+				dp[i][j].event = WITHIN_REP;
+			}
+			if (d_score > dp[i][j].dh) {
+				dp[i][j].dh = d_score;
+				dp[i][j].D_from = dp[i-1][j-1].D_from;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j-1;
+				dp[i][j].event = WITHIN_REP;
 			}
 		}
-		int gf = max(GH[i][i-1] + open_gap_penalty, GF[i][i-1]) + extend_gap_penalty;
-		int gm = max(GH[i-1][i-1] + match_score, D[i-1][i-1] + match_score);
-		if (gf > GH[i][i]) {
-			GH[i][i] = gf;
-			dbt[i][i] = BackTrace(i, i-1, WITHIN_REP);
-		}
-		if (gm > GH[i][i]) {
-			GH[i][i] = gm;
-			dbt[i][i] = BackTrace(i-1, i-1, WITHIN_REP);
-		}
+		// The alignment above can't reach the diagonal
 
-		// B transfer
-		int max_value = INT32_MIN, max_id = -1;
-		for (int j = 0; j <= i; j++) {
-			if (GH[i][j] > max_value) {
-				max_value = GH[i][j];
-				max_id = j;
+		// B transfer: close a repetition
+		int max_value = -INF, max_j = -1;
+		for (int j = 1; j < i; j++) {
+			if (dp[i][j].dh > max_value) {
+				max_value = dp[i][j].dh;
+				max_j = j;
 			}
 		}
-		if (max_value + close_rep > H[i][i]) {
-			H[i][i] = max_value + close_rep;
-			bt[i][i] = BackTrace(i, max_id, END_REP);
+		if (max_value + CLOSE_REP > dp[i][i].H) {
+			dp[i][i].H = max_value + CLOSE_REP;
+			dp[i][i].pi = i;
+			dp[i][i].pj = max_j;
+			dp[i][i].event = END_REP;
 		}
 	}
-	vector<vector<char>> mark;
-	mark.resize(n + 1);
-	for (int i = 0; i <= n; i++) {
-		mark[i].resize(i + 1, ' ');
-	}
-	int x = n, y = n;
-	BackTrace k = bt[x][y];
-	while (x > 0 and y > 0) {
-		int px = x, py = y;
-		x = k.x;
-		y = k.y;
-		if (k.t == NORMAL) {
-			mark[px][py] = '*';
-			k = bt[x][y];
-		} else if (k.t == END_REP) {
-			mark[px][py] = 'B';
-			k = dbt[x][y];
-		} else if (k.t == WITHIN_REP) {
-			mark[px][py] = 'G';
-			k = dbt[x][y];
-		} else if (k.t == START_REP) {
-			mark[px][py] = 'D';
-			k = bt[x][y];
+
+	// Trace back the optimal path
+	int ptr_i = n, ptr_j = n;
+	while (ptr_i > 0 and ptr_j > 0) {
+		const DpCell &t = dp[ptr_i][ptr_j];
+		if (t.event == END_REP) {
+			assert(ptr_i == ptr_j); // Only main diagonal closes repetitions
+			fprintf(stderr, "(%d,%d) -> Diagonal(%d)\n", t.pi, t.pj, ptr_i);
+		} else if (t.event == START_REP) {
+			fprintf(stderr, "Diagonal(%d) -> (%d, %d)\n", t.D_from, ptr_i, ptr_j);
+		} else if (t.event == NEW_COPY) {
+			fprintf(stderr, "New copy found at (%d, %d)\n", ptr_i, ptr_j);
 		}
+		ptr_i = t.pi;
+		ptr_j = t.pj;
 	}
 
 	ofstream out(out_fn);
@@ -229,10 +232,25 @@ void solve(int n, const char *seq, const string &out_fn)
 		else out << 0;
 		for (int j = 1; j <= i; j++) {
 			out << ",";
-			if (mark[i][j] == ' ')
-				out << H[i][j] << mark[i][j];
-			else
-				out << GH[i][j] << mark[i][j];
+			switch (dp[i][j].event) {
+				case NORMAL:
+					out << dp[i][j].H;
+					break;
+				case START_REP:
+					out << dp[i][j].D_gate << " D " << dp[i][j].D_from;
+					break;
+				case NEW_COPY:
+					out << dp[i][j].dh << " C " << dp[i][j].D_from;
+					break;
+				case WITHIN_REP:
+					out << dp[i][j].dh << " W ";
+					break;
+				case END_REP:
+					out << dp[i][j].H << " B " << dp[i][j].pj;
+					break;
+				default:
+					abort();
+			}
 		}
 		for (int j = i+1; j <= n; j++) {
 			out << ",";
