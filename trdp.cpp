@@ -67,6 +67,7 @@ struct TrdpOptions {
 	// It is necessary to penalize
 	int open_rep_pen;
 	int close_rep_pen;
+	bool visualize;
 
 	TrdpOptions() {
 		min_unit_size = 5;
@@ -81,6 +82,7 @@ struct TrdpOptions {
 		rep_gap_e = -1;
 		open_rep_pen = -2;
 		close_rep_pen = -4; // TODO: penalize it harder
+		visualize = false;
 	}
 };
 
@@ -300,44 +302,20 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_f
 	}
 	fprintf(stderr, "Found %d duplications\n", rep_cnt);
 
-	if (DEBUG) {
+	if (o.visualize) {
 		ofstream out(out_fn);
 		assert(out.is_open());
-		for (int i = 0; i <= n; i++) {
-			if (i == 0) out << "0";
-			else out << "," << i << "(" << seq[i-1] << ")";
-		}
-		out << endl;
-		for (int i = 0; i <= n; i++) {
-			if (i > 0) out << seq[i-1];
-			else out << 0;
-			for (int j = 1; j <= i; j++) {
-				out << ",";
-				switch (dp[i][j].event) {
-					case NORMAL:
-						out << dp[i][j].H;
-						break;
-					case START_REP:
-						out << dp[i][j].D_gate << " D " << dp[i][j].D_from;
-						break;
-					case NEW_COPY:
-						out << dp[i][j].dh << " C " << dp[i][j].D_from;
-						break;
-					case WITHIN_REP:
-						out << dp[i][j].dh << " W ";
-						break;
-					case END_REP:
-						out << dp[i][j].H << " B " << dp[i][j].pj;
-						break;
-					default:
-						abort();
-				}
+		int ti = n, tj = n, te = -1;
+		while (ti > 0 and tj > 0) {
+			const DpCell &c = dp[ti][tj];
+			if (c.event != te) {
+				out << ti << "\t" << tj << endl;
 			}
-			for (int j = i+1; j <= n; j++) {
-				out << ",";
-			}
-			out << endl;
+			ti = c.pi;
+			tj = c.pj;
+			te = c.event;
 		}
+		out << 0 << "\t" << 0 << endl;
 		out.close();
 	}
 }
@@ -369,7 +347,7 @@ static inline int str2int(const char* s) {
 int main(int argc, char *argv[]) {
 	int c;
 	TrdpOptions opt;
-	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:")) >= 0) {
+	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:v")) >= 0) {
 		switch (c) {
 			case 'A':
 				opt.mat_score = str2int(optarg);
@@ -404,6 +382,9 @@ int main(int argc, char *argv[]) {
 			case 'e':
 				opt.rep_gap_e = str2int(optarg);
 				break;
+			case 'v':
+				opt.visualize = true;
+				break;
 			default:
 				fprintf(stderr, "Unrecognized option `%c`\n", c);
 				return usage(opt);
@@ -417,7 +398,7 @@ int main(int argc, char *argv[]) {
 		 te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
 	fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
 
-	string out_fn = "../self_" + string(argv[2]) + ".csv";
+	string out_fn = "../self_" + string(argv[optind + 1]) + ".txt";
 	trdp_core(opt, te.seq.length(), te.seq.c_str(), out_fn);
 	return 0;
 }
