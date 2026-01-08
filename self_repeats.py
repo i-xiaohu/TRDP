@@ -94,12 +94,14 @@ def visualize(text: str, bt):
             plt.text(x1, y0+2, 'motif=%s, repeat_range=[%d,%d)' % (motif, p[0]+1, i+1))
             plt.plot([x0, x0-tlen+mlen], [y0, y0], color=COLOR_TR, linestyle='--')
             repeat_time = tlen // mlen
-            px, py = x0-tlen+mlen, y0
-            for k in range(0, repeat_time - 1):
-                nx, ny = px - mlen, py
+            px, py = x0-tlen, y0
+            for k in range(0, repeat_time):
+                nx, ny = px + mlen, py
                 plt.plot([px, nx], [py, ny], color=COLOR_TR, linestyle='--')
+                if k == repeat_time - 1:
+                    break
                 px, py = nx, ny
-                nx, ny = px + mlen, py - mlen
+                nx, ny = px - mlen, py - mlen
                 plt.plot([px, nx], [py, ny], color=COLOR_COPY)
                 px, py = nx, ny
             x0, y0 = x1, y1

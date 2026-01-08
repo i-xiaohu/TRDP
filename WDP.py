@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import sys
 
 
 def cost(a: str, b: str):
@@ -254,8 +255,8 @@ def global_wraparound(pattern: str, text: str):
 
 
 if __name__ == '__main__':
-    motif, target = load_test_seq('./motif.csv', 2)
-    local_brute_force(motif, target)
-    local_wraparound(motif, target)
-    global_brute_force(motif, target)
+    motif, target = load_test_seq('./motif.csv', int(sys.argv[1]))
+    # local_brute_force(motif, target)
+    # local_wraparound(motif, target)
+    # global_brute_force(motif, target)
     global_wraparound(motif, target)

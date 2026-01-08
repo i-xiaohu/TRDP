@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import sys
 
 
 def load_test_seq(fn: str, n: int):
@@ -80,7 +81,7 @@ def self_alignment(seq: str):
     dotplot_dp(seq, dp, 'dotplot_dp')
 
 
-def backward_search(text: str):
+def simple_search(text: str):
     # It is easy to identify all perfect tandem repeats.
     # However, it is much harder to define them if they contain mismatches.
     # One aiming to identify all approximate tandem repeats must precisely define the property of them,
@@ -117,12 +118,12 @@ def backward_search(text: str):
     # occur in my program, except for the pointless competition with the main diagonal. The anti-Z is remarkably similar
     # to my jump operation.
 
-    text = '@' + text  # For 1-based index
     min_unit_len = 3
-    max_divergence = 0.2
-    n = len(text) - 1
-    i = n
-    while i >= min_unit_len * 2:
+    min_repeat_len = 10
+    max_motif_len = 100
+    n = len(text)
+    i = 0
+    while i + min_repeat_len < n:
         has_repeat = False
         jump = 0
         for k in range(min_unit_len, i // 2):
@@ -166,5 +167,5 @@ def backward_search(text: str):
 
 
 if __name__ == '__main__':
-    target_seq = load_test_seq('motif.csv', 4)
-    self_alignment(target_seq)
+    target_seq = load_test_seq('motif.csv', int(sys.argv[1]))
+    simple_search(target_seq)
