@@ -65,10 +65,13 @@ const int NEW_COPY = 2;
 const int WITHIN_REP = 3;
 const int END_REP = 4;
 
+int VERBOSE = 0;
+
 struct DpCell {
 	int E, F, H; // The original SW matrix
 	int D_gate; // Gate of duplication
 	int D_from; // Where duplication starts
+	int C_from; // Where new copy starts
 	int de, df, dh; // Sub matrix of duplication
 	int pi, pj, event; // Backtrace
 
@@ -76,6 +79,7 @@ struct DpCell {
 		E = F = H = -INF;
 		D_gate = -INF;
 		D_from = -1;
+		C_from = -1;
 		de = df = dh = -INF;
 		pi = pj = event = -1;
 	}
@@ -133,24 +137,50 @@ void solve(int n, const char *seq, const string &out_fn)
 		if (i > MIN_UNIT) {
 			// D gate comes from the last row
 			int max_value = dp[i-1][i-1].H; // Diagonal must be the maximum in regular matrix
-			int from = i-1;
+			int D_from = i - 1;
+			int C_from = -1;
 			int event = START_REP;
+			// FIXME: is it correct to find a new copy?
 			for (int j = 1; j < i-1; j++) {
 				if (dp[i-1][j].dh > max_value) { // If multiple maximums exist, choose the first one
 					max_value = dp[i-1][j].dh;
-					from = j;
+					C_from = dp[i-1][j].C_from;
+					D_from = j;
 					event = NEW_COPY;
 				}
 			}
+			if (VERBOSE) {
+				if (D_from == i - 1) {
+					printf("i=%d, Start copy, D_from=%d, max=%d\n", i, D_from, max_value);
+				} else {
+					printf("i=%d, New copy, C_from=%d, D_from=%d, max=%d\n", i, C_from, D_from, max_value);
+				}
+			}
 			// 0 is excluded because a match/mismatch is mandatory
-			for (int j = 1; j <= from - MIN_UNIT + 1; j++) {
-				// No penalty for new copy
-				int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN) + (event == START_REP ?OPEN_REP :0);
-				dp[i][j].D_gate = max_value + tmp;
-				dp[i][j].D_from = from;
-				dp[i][j].pi = i-1;
-				dp[i][j].pj = from;
-				dp[i][j].event = event;
+			if (event == START_REP) {
+				// Open duplication
+				for (int j = 1; j <= D_from - MIN_UNIT + 1; j++) {
+					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN) + OPEN_REP;
+					dp[i][j].D_gate = max_value + tmp;
+					dp[i][j].C_from = j;
+					dp[i][j].D_from = D_from;
+					dp[i][j].pi = i-1;
+					dp[i][j].pj = D_from;
+					dp[i][j].event = event;
+				}
+			} else {
+				// FIXME: cells in [1, c_from] compete with d_from?
+				assert(C_from > 0);
+				for (int j = C_from; j <= D_from - MIN_UNIT + 1; j++) {
+					// No penalty for new copy
+					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :MIS_PEN);
+					dp[i][j].D_gate = max_value + tmp;
+					dp[i][j].C_from = C_from;
+					dp[i][j].D_from = D_from;
+					dp[i][j].pi = i-1;
+					dp[i][j].pj = D_from;
+					dp[i][j].event = event;
+				}
 			}
 		}
 
@@ -164,8 +194,10 @@ void solve(int n, const char *seq, const string &out_fn)
 				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + GAP_O, dp[i][j-1].df) + GAP_E;
 				d_score = max(dp[i-1][j-1].D_gate, dp[i-1][j-1].dh) + tmp;
 			}
+			DpCell backup = dp[i][j];
 			if (v_score > dp[i][j].dh) {
 				dp[i][j].dh = v_score;
+				dp[i][j].C_from = dp[i-1][j].C_from;
 				dp[i][j].D_from = dp[i-1][j].D_from;
 				dp[i][j].pi = i-1;
 				dp[i][j].pj = j;
@@ -173,6 +205,7 @@ void solve(int n, const char *seq, const string &out_fn)
 			}
 			if (h_score > dp[i][j].dh) {
 				dp[i][j].dh = h_score;
+				dp[i][j].C_from = dp[i][j-1].C_from;
 				dp[i][j].D_from = dp[i][j-1].D_from;
 				dp[i][j].pi = i;
 				dp[i][j].pj = j-1;
@@ -180,10 +213,14 @@ void solve(int n, const char *seq, const string &out_fn)
 			}
 			if (d_score > dp[i][j].dh) {
 				dp[i][j].dh = d_score;
+				dp[i][j].C_from = dp[i-1][j-1].C_from;
 				dp[i][j].D_from = dp[i-1][j-1].D_from;
 				dp[i][j].pi = i-1;
 				dp[i][j].pj = j-1;
 				dp[i][j].event = WITHIN_REP;
+			}
+			if (dp[i][j].D_gate > dp[i][j].dh) {
+				dp[i][j] = backup;
 			}
 		}
 		// The alignment above can't reach the diagonal
