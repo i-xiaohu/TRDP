@@ -20,11 +20,14 @@
     left=2cm,
     right=2cm
 }
+\usepackage{multirow}
+\usepackage{tcolorbox}
+
 
 \titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
 \title{\textbf{包含拷贝事件的动态规划序列比对}}
 \author{季发虎}
-\date{2025年12月20日}
+\date{2025年1月6日}
 
 \begin{document}
 \maketitle
@@ -46,100 +49,294 @@ Gary Benson的DSI（Duplication Substitution Indel）[\ref{gary_1997}] 模型是
 
 其中 $\text{dup}(a, b])$ 表示将序列 $a^{*}$ 比对至序列 $b$，$a^{*}$ 代表 $a$ 重复任意次数。该函数实现方法为全局的wrapround动态规划[\ref{wraparound}]，时间复杂度为 $O(|a||b|)$。
 
-若序列 $A$ 和 $B$ 的长度分别为 $N$ 和 $M$，则DSI模型的时间复杂度为 $O(N^2M^2)$。鉴于该模型的低扩展性，本项目旨在提出一个平方级时间复杂度的解决方案，包含两个步骤：
+若序列 $A$ 和 $B$ 的长度分别为 $N$ 和 $M$，则DSI模型的时间复杂度为 $O(N^2M^2)$。鉴于该模型的低扩展性，本项目旨在提出一个平方级时间复杂度的解决方案，包含两个阶段：
 
 \begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
-    \item 对序列进行自比对，以识别序列自身所包含的复制事件。
-    \item 在上一阶段中识别出的重复断点处进行内循环，做wraparound DP来插入复制事件。
+    \item 对序列进行自比对，识别序列自身所包含的复制事件。
+    \item 在上一阶段中识别出的重复断点处进行内循环（wraparound），以插入复制事件。
 \end{enumerate}
 
 该方案假设序列之间的拷贝数变异仅发生于序列内部的重复断点处。这一假设大幅减少了DSI模型中允许发生重复事件的状态数，有机会使DSI模型在真实长序列上具备实用性。
 
-然而，化简模型必然会损失原始理论的一般性，尤其体现在第一阶段。第一阶段的任务是寻找序列自身的重复事件，然而序列自身的重复存在多种表示形式，当拷贝之间存在差异时，寻找最优的表示形式并不是一个简单问题。我们目前采取的方案是寻找尽可能小的重复单元。这一方面可以缓解表示歧义，另一方面可以增加拷贝断点的数量，以提升第二阶段识别潜在拷贝变异事件的灵敏度。
+然而，化简模型必然会损失原始理论的一般性，尤其体现在第一阶段。第一阶段的任务是寻找序列自身的重复事件。但序列自身的重复存在多种表示形式（如嵌套），这使得重复序列的最优形式变得很复杂，尤其在重复单元之间存在差异时。本文目前采取的方案是寻找尽可能小的重复单元。这一方面可以减少表示歧义，另一方面可以增加拷贝断点的数量，以提升第二阶段识别潜在拷贝变异事件的灵敏度。
 
-\section{初步实现}
+\section{识别序列内部重复}
 
-\textbf{识别序列内重复事件}。令 $F_i$ 为序列 $S[1:i]$ 与自身比对的结果，其中可能包含重复事件，$F_i$ 的转移公式为：
+本项目采用序列自比对的方式实现序列内部重复区域识别。区别于传统的Smith-Waterman（SW）模型，本方法在动态规划过程中插入了序列复制事件，即插入了一种新的转移路径。SW模型中允许匹配（错配）、插入、删除三种事件，对应“左上”、“左”和“上”三种转移路径。本方法额外允许序列复制事件，其转移路径来自于“右上”方的任意一个位置。在序列自比对过程中，SW矩阵的最优得分一定位于对角线上，且对角线两侧的得分完全镜像。为了驱使重复事件的得分远离对角线，重复事件必须获得额外的奖励（更小的罚分）。表 \ref{tab_parameters} 给出了本方案所使用的分值参数。
 
-\[
-F_i = \max
-\begin{cases}
-    F_{i-1} + \text{mat}(S[i], S[i])) \\
-    F_j + \text{dup2}(S[k:i], S[j:i-k)) + G_{open} \quad k \in [R_l, R_r], j \in [1, i-k) \\ 
-\end{cases}
-\]
-
-其中，第一行代表来自对角线的自匹配转移，第二行为发生重复变异事件的转移。该方法枚举重复片段的长度（范围 $[R_l, R_r]$ 为外置参数），并尝试将重复单元 $S[k:i]$ 比对至 $S[j:i-k)$。此处的 $\text{dup2}(a,b)$ 为修改之后的global wrapround DP，主要区别在于奖励重复事件的发生。若 $a$ 重复了 $n$ 次，则 $\text{dup2}(a, b) = \text{dup}(a, b) + n G_{dup}$。其中，$G_{dup}$ 为每次复制的奖励分数（默认为1）。与之对应的 $G_{open}$ 则对应着开始这次重复事件的初始罚分（默认为-5）。该方法有如下两个作用：
-
-\begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
-    \item 在自比对与wraparound DP打分矩阵完全相同的情况下，驱离最优路径远离对角线。
-    \item 通过奖励重复次数，该方法偏向长度更小的重复单元，避免歧义表示。
-\end{enumerate}
-
-从序列末尾回溯该动态规划即可得到序列内部所有的重复事件。若 $F_i$ 由 $F_{i-1}$ 转移而来，则该区域为非重复区域。若 $F_i$ 由 $F_j$ 转移而来，则此处一定存在一个重复事件。且该重复事件一定为最优的转移策略，因为$F_j$ 已经考虑了先前所有的重复事件。且由于 $G_{open}$ 的存在，$F_i$ 和 $F_j$ 不可能对应同一个重复事件。
-
-假设重复单元的最大长度为 $L$，序列 $S$ 的长度为 $N$，则该方法在序列的每个位置枚举重复单元长度 $L$ 并做时间复杂度为 $O(NL)$ 的wrapround DP，总时间复杂度为 $O(N^2L^2)$。
-
-\begin{figure}[h!]
+\begin{table}[h]
     \centering
-    \includegraphics[width=0.7 \textwidth]{stage1.png}
-    \caption{自比对识别重复事件}
-    \label{fig_stage1}
-\end{figure}
+    \caption{分值参数说明}
+    \begin{tabular}{l|lrr}
+        \hline
+        \textbf{区域} & \textbf{参数} & \textbf{说明} & \textbf{默认值} \\
+        \hline
+        \multirow{4}{*}{非重复区域} & $A$ & 匹配得分 & 1 \\
+        & $B$ & 错配罚分 & -4 \\
+        & $G_o$ & 打开Gap罚分 & -6 \\
+        & $G_e$ & 延伸Gap罚分 & -1 \\
+        \hline
+        \multirow{7}{*}{重复区域} & $u$ & 最小重复单元 & 5 \\
+        & $d$ & 打开重复罚分 & -2 \\
+        & $p$ & 关闭重复罚分 & -6 \\
+        & $a$ & 匹配得分 & 2 \\
+        & $b$ & 错配罚分 & -3 \\
+        & $g_o$ & 打开Gap罚分 & -3 \\
+        & $g_e$ & 延伸Gap罚分 & -1 \\
+        \hline
+    \end{tabular}
+    \label{tab_parameters}
+\end{table}
 
-在简单的模拟数据（重复单元5-20bp，重复次数10-25，两翼区域20-120bp，拷贝变异率 $\le 5\%$）上测试，该方法可以完全还原出重复区域与非重复区域，并且能够识别出重复单元以及次数（图\ref{fig_stage1}）。
+表 \ref{tab_parameters} 对重复区域和非重复区域采取了不同的打分方式，重复区域是由 $d$ 和 $p$ 所对应的事件标识的。$u$ 代表打开一个重复事件，从对角线向矩阵的左侧转移，亦称为 $D$ 转移。$p$ 代表关闭一个重复事件，即从矩阵的左侧向对角线转移，或称为 $B$ 转移。这两种转移事件必须有所罚分，否则最优结果将是在对角线和任意一个匹配之间的反复跳跃。尤其是 $B$ 转移的罚分，对识别连续的重复单元有深远的影响。介于 $D$ 和 $B$ 之间重复区域的打分比非重复区域的打分更加宽容，这样才能驱动重复事件的发生。此外，表 \ref{tab_parameters} 还对最小重复单元的大小做出限制，以防止由随机碰撞所产生的伪重复事件（如连续相同的几个字符）。
 
-当前方法的问题在于时间复杂度高，可扩展性较差。但这主要是由 $O(N^2)$ 主导的，重复单元的长度 $L$（一般 $\le 200$ bp）理论上远小于序列长度 $N$。
-
-\textbf{比对两条序列}。在自比对获得重复事件的断点位置后，本方法对DSI模型做以下修改。
+基于以上打分策略，下文给出本方法的动态规划递推式。为了更好地表示规则，递推式被划分为多个模块。
 
 \[
+j < i
 \left\{
 \begin{aligned}
     E_{i,j} & = \max(E_{i-1,j}, H_{i-1,j} + G_o) + G_e \\
     F_{i,j} & = \max(F_{i,j-1}, H_{i,j-1} + G_o) + G_e \\
-    M_{i,j} & = \max(H_{i-1,j-1} + \text{mat}(A[i], B[j])) \\
-    D_{i,j} & = \max(H_{i-x,j-y} + \text{dup}(A[i-x:x], B[j-y:y]) + G_e) \\
-    & \quad \quad i-x, j-y \in B \text{: \{break points from stage 1\}} \\
-    H_{i,j} & = \max(E_{i,j}, F_{i,j}, M_{i,j}, D_{i,j})
+    M_{i,j} & = H_{i-1,j-1} + (A \text{ or } B) \\
+    H_{i,j} & = \max(E_{i,j}, F_{i,j}, M_{i,j}) \\
+    D_{i,j} & = \max(H_{i-1,i-1} + d, h_{i-1,k}) \quad k \in {1..i-u} \\
 \end{aligned}
 \right.
 \]
 
-在两条包含VNTR变异的模拟序列上，图\ref{fig_stage2} 给出了DSI模型的比对结果。该算法的时间复杂度为 $O(NMLB)$，其中SI模型可以通过SIMD，Banded以及Wavefront等算法加速，内层的wrapround可以通过SIMD，Wavefront以及多核心并行加速。
+该部分描述了非对角线单元格的递归式，其中 $D$ 表示允许复制事件发生的通道。它可以由对角线转移而来，也可以由上一次重复转移而来。前者存在 $d$ 的罚分，而后者没有罚分。即只有第一次重复时罚分，后续的重复无需额外开销，以此鼓励重复事件形成更加规则的zigzag折线。
 
-\begin{figure}[h!]
+\[
+j < i
+\left\{
+\begin{aligned}
+    DF_{i,j} & = i-1 & \text{if } D_{i,j} = H_{i-1,i-1} + d \\
+    CF_{i,j} & = j & \text{if } D_{i,j} = H_{i-1,i-1} + d \\
+    CF_{i,j} &= CF_{i-1, k} & \text{if } D_{i,j} = \max(h_{i-1,k}) \\
+\end{aligned}
+\right.
+\]
+
+该部分通过 $CF$ 和 $DF$ 约束后续的重复比对的起始和结束位置，即 $D$ 转移后的重复匹配不应该超过对应重复单元所对应的范围。该方法避免了 $D$ 转移后无法再折回重复开头的情况，以及无意义的重复匹配。
+
+\[
+j < i
+\left\{
+\begin{aligned}
+    e_{i,j} & = \max(D_{i-1,j}, e_{i-1,j}, h_{i-1,j} + g_o) + g_e \\
+    f_{i,j} & = \max(D_{i,j-1}, f_{i,j-1}, h_{i,j-1} + g_o) + g_e \\
+    m_{i,j} & = \max(h_{i-1,j-1}, D_{i-1,j-1}) + (A \text{ or } B) \quad j \in [CF_{i-1,j-1}, DF_{i-1,j-1}]\\
+    h_{i,j} & = \max(e_{i,j}, f_{i,j}, m_{i,j}) \\
+    D_{i,j} & = \max(D_{i,j}, h_{i,j}) \\
+\end{aligned}
+\right.
+\]
+
+该部分给出 $D$ 通道打开之后的重复事件匹配子矩阵。该子矩阵受到 $CF$ 和 $DF$ 的约束，而且每个单元格继承来自于其最优路径的 $CF$ 和 $DF$ 值。为了简化转移矩阵的表示形式，此处没有详细列出规则。在该子矩阵完成匹配后，有一次再次打开 $D$ 通道的机会，得分最高的通道门将会开启下一次重复子矩阵。
+
+\[
+j = i
+\left\{
+\begin{aligned}
+    F_{i,j} & = \max(F_{i,j-1}, H_{i,j-1} + G_o) + G_e \\
+    M_{i,j} & = H_{i-1,j-1} + (A \text{ or } B) \\
+    H_{i,j} & = \max(E_{i,j}, F_{i,j}, M_{i,j}, h_{i,k} + p) \quad k \in {1..i-u} \\
+\end{aligned}
+\right.
+\]
+
+该部分给出对角线元素的转移方程。对角线单元格可以标识重复事件的结束，由重复子矩阵中的最大值转移而来。本方法仅计算全局矩阵中的对角线（$j=i$）和左下三角阵（$j<i$），右上三角阵（$j>i$）不需要考虑。
+
+以上即是本文算法识别序列内部串联重复事件的理论描述。虽然递推式比原始SW算法复杂很多，但理论时间复杂度并没有增加。若序列长度为 $N$，该算法的时间复杂度为 $O(N^2)$。
+
+\newpage
+\section{模拟数据测试}
+本节在包含不同重复的模拟数据上对算法进行测试。表 \ref{tab_sim} 给出了测试数据的主要特征，后续中的每一页给出程序的输出以及可视化结果。
+
+\begin{table}[h]
     \centering
-    \includegraphics[width=0.7 \textwidth]{stage2.png}
-    \caption{DSI模型比对结果}
-    \label{fig_stage2}
+    \caption{模拟数据测试}
+    \begin{tabular}{lrrrr}
+        \hline
+        \textbf{样例} & \textbf{重复单元 [bp]} & \textbf{重复次数} & \textbf{变异率 [\%]} & \textbf{非重复长度 [bp]} \\
+        \hline
+        1 & 3 & 15 & 0 & 8, 8 \\
+        2 & 5 & 10 & 0 & 20,20 \\
+        3 & 3,5 & 15,10 & 0 & 8,20,8,20 \\
+        4 & 5 & 10 & 1 & 20, 25 \\
+        5 & 10 & 20 & 3 & 80, 80 \\
+        6 & 40 & 90 & 5 & 150, 125 \\
+        7 & 100 & 100 & 5 & 1000,1000 \\
+        \hline
+    \end{tabular}
+    \label{tab_sim}
+\end{table}
+
+
+
+\newpage
+样例1通过，短于最小长度的重复仍可正确识别，且识别的长度尽可能短（识别结果长度为6，而非9或更大）。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 1, width=0.8 \textwidth]
+\begin{verbatim}
+motif=CAC, period=15, mutation=0, flank=(8,8)
+motif_len=3, seq_len=61
+    Close: 13 -> 55 (Diagonal)
+    Copy: 10 (i=52) -> 15, unit_size=6
+    Copy: 10 (i=46) -> 15, unit_size=6
+    Copy: 10 (i=40) -> 15, unit_size=6
+    Copy: 10 (i=34) -> 15, unit_size=6
+    Copy: 10 (i=28) -> 15, unit_size=6
+    Copy: 10 (i=22) -> 15, unit_size=6
+    Open: 10 (Diagonal) -> 15, unit_size=6
+    Found 7 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_1.png}
+    \caption{Case 1}
 \end{figure}
 
-\begin{figure}[h!]
+\newpage
+样例2通过。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 2, width=0.8 \textwidth]
+\begin{verbatim}
+motif=CCCAA, period=10, mutation=0, flank=(20,20)
+motif_len=5, seq_len=90
+    Close: 25 -> 70 (Diagonal)
+    Copy: 21 (i=66) -> 25, unit_size=5
+    Copy: 21 (i=61) -> 25, unit_size=5
+    Copy: 21 (i=56) -> 25, unit_size=5
+    Copy: 21 (i=51) -> 25, unit_size=5
+    Copy: 21 (i=46) -> 25, unit_size=5
+    Copy: 21 (i=41) -> 25, unit_size=5
+    Copy: 21 (i=36) -> 25, unit_size=5
+    Copy: 21 (i=31) -> 25, unit_size=5
+    Open: 21 (Diagonal) -> 25, unit_size=5
+    Found 9 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
     \centering
-    \includegraphics[width=0.7 \textwidth]{gsw_matrix1.png}
-    \caption{SI模型比对结果}
-    \label{fig_sw}
+    \includegraphics[width=0.8 \textwidth]{../self_2.png}
+    \caption{Case 2}
 \end{figure}
 
-相比不包含重复事件的SI模型，Smith-Waterman算法给出不连续的插入和删除结果，无法真实反应拷贝数变异（图\ref{fig_sw}）。
+\newpage
+样例3包含两次重复事件，测试通过。
 
-该方法在真实数据上的表现有待测试。
+\begin{center}
+\begin{tcolorbox}[title=Case 3, width=0.8 \textwidth]
+\begin{verbatim}
+Found 18 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_3.png}
+    \caption{Case 3}
+\end{figure}
+
+\newpage
+样例4通过，略。
+
+样例5中重复单元开始包含较多差异，重复单元的连续性被打断。此处暴露出一个问题：表 \ref{tab_parameters} 的关闭重复罚分 $p$ 难以设置。当重复区域由于差异事件导致罚分时，算法倾向通过 $B$ 转移来逃避矩阵内部的惩罚。毕竟目前 $p$ 的分值为-6，当连续两个以上错配发生时（罚分为-9），动态规划的最优路径便成了图中所示的结果。
+
+我之前所提到的问题正是对应这种情况：零花费从后向前转移，导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。但在本文的理论模型下，该路径是正确的最优路径。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 5, width=0.8 \textwidth]
+\begin{verbatim}
+motif=ACTTTCGAAG, period=20, mutation=6, flank=(80,80)
+motif_len=10, seq_len=360
+Found 19 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_6.png}
+    \caption{Case 5}
+\end{figure}
+
+\newpage
+在样例5中，我大幅加重关闭重复的罚分 $p$，将其设置为-20。虽然程序可以输出期望的结果，但这会导致小规模的重复识别不出来。在面临情况未知的新数据时，我们无法通过手动调整参数以期待获得理想的结果。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 5: p\=-20, width=0.8 \textwidth]
+\begin{verbatim}
+motif=ACTTTCGAAG, period=20, mutation=6, flank=(80,80)
+motif_len=10, seq_len=360
+Found 17 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_6_p20.png}
+    \caption{Case 5: p=-20}
+\end{figure}
+
+\newpage
+随着测试数据规模增大，错误数不断增加，该问题变得更加明显。但算法仍然能良好区分重复区域和非重复区域，侧面验证了逻辑实现的正确性。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 6, width=0.8 \textwidth]
+\begin{verbatim}
+motif_length=40, period=40, mutation=90, flank=(150,125)
+motif_len=50, seq_len=2284
+Found 56 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_7.png}
+    \caption{Case 6}
+\end{figure}
+
+\newpage
+此处给出 $10^4$ 规模级别数据的测试结果。在我的个人笔记本上测试，程序可以在1秒内输出结果。
+
+\begin{center}
+\begin{tcolorbox}[title=Case 7, width=0.8 \textwidth]
+\begin{verbatim}
+motif_length=100, period=100, mutation=96, flank=(1000,1000)
+motif_len=100, seq_len=11995
+Found 143 duplications
+\end{verbatim}
+\end{tcolorbox}
+\end{center}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.8 \textwidth]{../self_10.png}
+    \caption{Case 7}
+\end{figure}
+
+\newpage
 \section{讨论}
-
-目前所实现的第一阶段算法与前期讨论的D转移策略并不一致，这主要是因为D转移的正确性或正确实现D转移的复杂性有待讨论。
-
 \begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
-    \item D转移提供的通道不具备一致性，即无法约束重复单元，识别不出与上述算法一致的最优重复。
-    \item 零花费从后向前转移，导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。也就是，一次计算未能达到最优，再次循环更新会产生新的结果。此处请参考wrapround论文[\ref{wraparound}]，文中重点讨论了不同周期之间状态转移的正确性：第二轮更新时，只有匹配+删除才会产生更优的结果。
-    \item 也许以上错误可以通过规则约束实现，但正确的约束可能并不简单，这损害了理论算法的简洁性。
+    \item 本方法在复杂数据上可以高效识别重复事件，但目前 $B$ 转移并不能准确识别重复时间的结束。
+    \item 本方法依赖复杂，加速难度更高。
+    \item 第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现[\ref{gad_2001}, \ref{michael_1984}]，这将大幅增加算法的效率和可优化空间。
 \end{enumerate}
 
-最后附上我的个人建议。第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现[\ref{gad_2001}, \ref{michael_1984}]，这将大幅增加算法的效率和可优化空间。
-
 \section{参考文献}
-
 \begin{enumerate}
     \item Gary Benson. 1997. Sequence alignment with tandem duplication. \label{gary_1997}
     \item Vincent A. Fischetti, Gad M. Landau, Jeanette P. Schmidt and Peter H. Sellers. 1992. Identifying periodic occurrences of a template with applications to protein structure. \label{wraparound}
