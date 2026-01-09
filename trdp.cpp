@@ -81,7 +81,7 @@ struct TrdpOptions {
 		rep_gap_o = -3;
 		rep_gap_e = -1;
 		open_rep_pen = -2;
-		close_rep_pen = -4; // TODO: penalize it harder
+		close_rep_pen = -6; // FIXME: how to set this value?
 		visualize = false;
 	}
 };
