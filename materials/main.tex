@@ -23,7 +23,6 @@
 \usepackage{multirow}
 \usepackage{tcolorbox}
 
-
 \titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
 \title{\textbf{包含拷贝事件的动态规划序列比对}}
 \author{季发虎}
@@ -164,15 +163,13 @@ j = i
         1 & 3 & 15 & 0 & 8, 8 \\
         2 & 5 & 10 & 0 & 20,20 \\
         3 & 3,5 & 15,10 & 0 & 8,20,8,20 \\
-        4 & 5 & 10 & 1 & 20, 25 \\
-        5 & 10 & 20 & 3 & 80, 80 \\
-        6 & 40 & 90 & 5 & 150, 125 \\
-        7 & 100 & 100 & 5 & 1000,1000 \\
+        4 & 10 & 20 & 3 & 80, 80 \\
+        5 & 50 & 40 & 5 & 150, 125 \\
+        6 & 100 & 100 & 5 & 1000,1000 \\
         \hline
     \end{tabular}
     \label{tab_sim}
 \end{table}
-
 
 
 \newpage
@@ -198,9 +195,10 @@ motif_len=3, seq_len=61
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_1.png}
+    \includegraphics[width=0.8 \textwidth]{self_1.png}
     \caption{Case 1}
 \end{figure}
+
 
 \newpage
 样例2通过。
@@ -227,9 +225,10 @@ motif_len=5, seq_len=90
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_2.png}
+    \includegraphics[width=0.8 \textwidth]{self_2.png}
     \caption{Case 2}
 \end{figure}
+
 
 \newpage
 样例3包含两次重复事件，测试通过。
@@ -244,19 +243,18 @@ Found 18 duplications
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_3.png}
+    \includegraphics[width=0.8 \textwidth]{self_3.png}
     \caption{Case 3}
 \end{figure}
 
-\newpage
-样例4通过，略。
 
-样例5中重复单元开始包含较多差异，重复单元的连续性被打断。此处暴露出一个问题：表 \ref{tab_parameters} 的关闭重复罚分 $p$ 难以设置。当重复区域由于差异事件导致罚分时，算法倾向通过 $B$ 转移来逃避矩阵内部的惩罚。毕竟目前 $p$ 的分值为-6，当连续两个以上错配发生时（罚分为-9），动态规划的最优路径便成了图中所示的结果。
+\newpage
+样例4中重复单元开始包含较多差异，重复单元的连续性被打断。此处暴露出一个问题：表 \ref{tab_parameters} 的关闭重复罚分 $p$ 难以设置。当重复区域由于差异事件导致罚分时，算法倾向通过 $B$ 转移来逃避矩阵内部的惩罚。毕竟目前 $p$ 的分值为-6，当连续两个以上错配发生时（罚分为-9），动态规划的最优路径便成了图中所示的结果。
 
 我之前所提到的问题正是对应这种情况：零花费从后向前转移，导致全局路径错误。若 $(i_2, j_2)$ 从 $(i_1, j_1)$ 转移而来，矩阵中可能存在介于二者之间的 $(i_3, j_3)$ 满足 $(i_1, j_1) \rightarrow (i_3, j_3) + (i_3, j_3) \rightarrow (i_2, j_2) > (i_1, j_1) \rightarrow (i_2, j_2)$。但在本文的理论模型下，该路径是正确的最优路径。
 
 \begin{center}
-\begin{tcolorbox}[title=Case 5, width=0.8 \textwidth]
+\begin{tcolorbox}[title=Case 4, width=0.8 \textwidth]
 \begin{verbatim}
 motif=ACTTTCGAAG, period=20, mutation=6, flank=(80,80)
 motif_len=10, seq_len=360
@@ -267,15 +265,16 @@ Found 19 duplications
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_6.png}
-    \caption{Case 5}
+    \includegraphics[width=0.8 \textwidth]{self_4.png}
+    \caption{Case 4}
 \end{figure}
 
+
 \newpage
-在样例5中，我大幅加重关闭重复的罚分 $p$，将其设置为-20。虽然程序可以输出期望的结果，但这会导致小规模的重复识别不出来。在面临情况未知的新数据时，我们无法通过手动调整参数以期待获得理想的结果。
+在样例4中，我大幅加重关闭重复的罚分 $p$，将其设置为-20。虽然程序可以输出期望的结果，但这会导致小规模的重复识别不出来。在面临情况未知的新数据时，我们无法通过手动调整参数以期待获得理想的结果。
 
 \begin{center}
-\begin{tcolorbox}[title=Case 5: p\=-20, width=0.8 \textwidth]
+\begin{tcolorbox}[title=Case 4: p(-20), width=0.8 \textwidth]
 \begin{verbatim}
 motif=ACTTTCGAAG, period=20, mutation=6, flank=(80,80)
 motif_len=10, seq_len=360
@@ -286,15 +285,16 @@ Found 17 duplications
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_6_p20.png}
-    \caption{Case 5: p=-20}
+    \includegraphics[width=0.8 \textwidth]{self_4_p20.png}
+    \caption{Case 4: p=-20}
 \end{figure}
+
 
 \newpage
 随着测试数据规模增大，错误数不断增加，该问题变得更加明显。但算法仍然能良好区分重复区域和非重复区域，侧面验证了逻辑实现的正确性。
 
 \begin{center}
-\begin{tcolorbox}[title=Case 6, width=0.8 \textwidth]
+\begin{tcolorbox}[title=Case 5, width=0.8 \textwidth]
 \begin{verbatim}
 motif_length=40, period=40, mutation=90, flank=(150,125)
 motif_len=50, seq_len=2284
@@ -305,15 +305,16 @@ Found 56 duplications
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_7.png}
-    \caption{Case 6}
+    \includegraphics[width=0.8 \textwidth]{self_5.png}
+    \caption{Case 5}
 \end{figure}
 
+
 \newpage
-此处给出 $10^4$ 规模级别数据的测试结果。在我的个人笔记本上测试，程序可以在1秒内输出结果。
+此处给出 $10^4$ 规模级别数据的测试结果。在我的个人笔记本上测试，程序可以在数秒内输出结果。
 
 \begin{center}
-\begin{tcolorbox}[title=Case 7, width=0.8 \textwidth]
+\begin{tcolorbox}[title=Case 6, width=0.8 \textwidth]
 \begin{verbatim}
 motif_length=100, period=100, mutation=96, flank=(1000,1000)
 motif_len=100, seq_len=11995
@@ -324,14 +325,15 @@ Found 143 duplications
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.8 \textwidth]{../self_10.png}
-    \caption{Case 7}
+    \includegraphics[width=0.8 \textwidth]{self_6.png}
+    \caption{Case 6}
 \end{figure}
+
 
 \newpage
 \section{讨论}
 \begin{enumerate}[itemsep=0pt, topsep=0pt, label=(\arabic*)]
-    \item 本方法在复杂数据上可以高效识别重复事件，但目前 $B$ 转移并不能准确识别重复时间的结束。
+    \item 本方法在复杂数据上可以高效识别重复事件，但目前 $B$ 转移并不能准确识别重复事件的结束。
     \item 本方法依赖复杂，加速难度更高。
     \item 第一阶段的核心目标是识别潜在的重复事件位点，该过程其实可以由时间复杂度为 $O(N\log{N})$ 的分治算法实现[\ref{gad_2001}, \ref{michael_1984}]，这将大幅增加算法的效率和可优化空间。
 \end{enumerate}
