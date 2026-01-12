@@ -11,8 +11,27 @@
 #include <sstream>
 #include <iostream>
 #include <getopt.h>
-
+#include <zlib.h>
+#include <sys/resource.h>
+#include "kseq.h"
 using namespace std;
+
+KSEQ_INIT(gzFile, gzread)
+
+double cputime()
+{
+	struct rusage r;
+	getrusage(RUSAGE_SELF, &r);
+	return r.ru_utime.tv_sec + r.ru_stime.tv_sec + 1e-6 * (r.ru_utime.tv_usec + r.ru_stime.tv_usec);
+}
+
+double realtime()
+{
+	struct timeval tp;
+	struct timezone tzp;
+	gettimeofday(&tp, &tzp);
+	return tp.tv_sec + tp.tv_usec * 1e-6;
+}
 
 struct TestEntity {
 	string motif;
@@ -67,7 +86,7 @@ struct TrdpOptions {
 	// It is necessary to penalize
 	int open_rep_pen;
 	int close_rep_pen;
-	bool visualize;
+	const char *vis_fn;
 
 	TrdpOptions() {
 		min_unit_size = 5;
@@ -81,8 +100,8 @@ struct TrdpOptions {
 		rep_gap_o = -3;
 		rep_gap_e = -1;
 		open_rep_pen = -2;
-		close_rep_pen = -6; // FIXME: how to set this value?
-		visualize = false;
+		close_rep_pen = -6; // TODO: how to set this value?
+		vis_fn = nullptr;
 	}
 };
 
@@ -113,8 +132,9 @@ struct DpCell {
 	}
 };
 
-void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_fn)
+void trdp_core(const TrdpOptions &o, int n, const char *seq)
 {
+	double ctime = cputime();
 	const int MAT_SCORE = o.mat_score;
 	const int MIS_PEN = o.mis_pen;
 	const int GAP_O = o.gap_o;
@@ -180,9 +200,9 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_f
 			int D_from = i - 1;
 			int C_from = -1;
 			int event = START_REP;
-			// FIXME: is it correct to find a new copy?
 			for (int j = 1; j < i-1; j++) {
-				if (dp[i-1][j].dh > max_value) { // If multiple maximums exist, choose the first one
+				// FIXME: This prevents a small sub-matrix from forming, which might have better score in global view
+				if (dp[i-1][j].dh > max_value and dp[i-1][j].D_from == j) { // If multiple maximums exist, choose the first one
 					max_value = dp[i-1][j].dh;
 					C_from = dp[i-1][j].C_from;
 					D_from = j;
@@ -269,7 +289,8 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_f
 		// B transfer: close a repetition
 		int max_value = -INF, max_j = -1;
 		for (int j = 1; j < i; j++) {
-			if (dp[i][j].dh > max_value) {
+			// Only return to diagonal if sub-matrix reaches the lower-right corner
+			if (dp[i][j].dh > max_value and dp[i][j].D_from == j) {
 				max_value = dp[i][j].dh;
 				max_j = j;
 			}
@@ -300,10 +321,10 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_f
 		ptr_i = t.pi;
 		ptr_j = t.pj;
 	}
-	fprintf(stderr, "Found %d duplications\n", rep_cnt);
+	fprintf(stderr, "Found %d duplications in %.3f CPU seconds\n", rep_cnt, cputime() - ctime);
 
-	if (o.visualize) {
-		ofstream out(out_fn);
+	if (o.vis_fn) {
+		ofstream out(o.vis_fn);
 		assert(out.is_open());
 		int ti = n, tj = n, te = -1;
 		while (ti > 0 and tj > 0) {
@@ -321,7 +342,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq, const string &out_f
 }
 
 int usage(const TrdpOptions &o) {
-	fprintf(stderr, "Usage: TRDP [options] <CSV> <ID>\n");
+	fprintf(stderr, "Usage: TRDP [options] seq.fa\n");
 	fprintf(stderr, "  Self-Alignment Options:\n");
 	fprintf(stderr, "    -A [INT]  match score [%d]\n", o.mat_score);
 	fprintf(stderr, "    -B [INT]  mismatch penalty [%d]\n", o.mis_pen);
@@ -344,10 +365,24 @@ static inline int str2int(const char* s) {
 	return (int)strtol(s, nullptr, 10);
 }
 
+void process_seqs(const TrdpOptions &opt, const char *fn)
+{
+	gzFile f = gzopen(fn, "r");
+	assert(f != nullptr);
+	kseq_t *ks = kseq_init(f);
+	while (kseq_read(ks) >= 0) {
+		fprintf(stderr, "Processing %s (length=%ld)\n", ks->name.s, ks->seq.l);
+		trdp_core(opt, ks->seq.l, ks->seq.s);
+	}
+	kseq_destroy(ks);
+	gzclose(f);
+}
+
 int main(int argc, char *argv[]) {
+	double ctime = cputime(), rtime = realtime();
 	int c;
 	TrdpOptions opt;
-	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:v")) >= 0) {
+	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:v:")) >= 0) {
 		switch (c) {
 			case 'A':
 				opt.mat_score = str2int(optarg);
@@ -383,22 +418,27 @@ int main(int argc, char *argv[]) {
 				opt.rep_gap_e = str2int(optarg);
 				break;
 			case 'v':
-				opt.visualize = true;
+				opt.vis_fn = optarg;
 				break;
 			default:
 				fprintf(stderr, "Unrecognized option `%c`\n", c);
 				return usage(opt);
 		}
 	}
-	if (argc - optind != 2) return usage(opt);
-	const char *fn = argv[optind];
-	int id = str2int(argv[optind + 1]);
-	TestEntity te = input_csv_test_seq(id, fn);
-	fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
-		 te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
-	fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
-
-	string out_fn = "../self_" + string(argv[optind + 1]) + ".txt";
-	trdp_core(opt, te.seq.length(), te.seq.c_str(), out_fn);
+	if (argc - optind == 1) {
+		process_seqs(opt, argv[optind]);
+	} else if (argc - optind == 2) {
+		// TEST: CSV ID
+		const char *fn = argv[optind];
+		int id = str2int(argv[optind + 1]);
+		TestEntity te = input_csv_test_seq(id, fn);
+		fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
+		        te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
+		fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
+		trdp_core(opt, te.seq.length(), te.seq.c_str());
+	} else {
+		return usage(opt);
+	}
+	fprintf(stderr, "Program finishes in %.3f CPU seconds, %.3f real seconds\n", cputime()-ctime, realtime()-rtime);
 	return 0;
 }
