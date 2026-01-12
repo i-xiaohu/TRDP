@@ -74,6 +74,7 @@ if __name__ == '__main__':
     combine_text(text_array=(text1, text2), tab=table)
     gen_repeat(motif_len=10, repeat_n=20, mutation_rate=0.03, flank_l=80, flank_r=80, tab=table)
     gen_repeat(motif_len=50, repeat_n=40, mutation_rate=0.05, flank_l=150, flank_r=125, tab=table)
-    gen_repeat(motif_len=100, repeat_n=100, mutation_rate=0.01, flank_l=1000, flank_r=1000, tab=table)
+    gen_repeat(motif_len=100, repeat_n=100, mutation_rate=0.06, flank_l=1000, flank_r=1000, tab=table)
+    gen_repeat(motif_len=170, repeat_n=50, mutation_rate=0.18, flank_l=2000, flank_r=2000, tab=table)
     df = pd.DataFrame(table)
     df.to_csv('motif.csv', index=False)
