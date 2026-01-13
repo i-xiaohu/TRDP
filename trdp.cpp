@@ -13,6 +13,8 @@
 #include <getopt.h>
 #include <zlib.h>
 #include <sys/resource.h>
+#include <sys/time.h>
+#include <algorithm>
 #include "kseq.h"
 using namespace std;
 
@@ -132,6 +134,20 @@ struct DpCell {
 	}
 };
 
+struct RepUnit {
+	int tb, te;
+	int qb, qe; // [qb, qe) is a tandem repeat of [tb, te)
+	int score; // Alignment score
+	int match, mis, gap;
+
+	RepUnit() {
+		tb = te = 0;
+		qb = qe = 0;
+		score = -INF;
+		match = mis = gap = 0;
+	}
+};
+
 void trdp_core(const TrdpOptions &o, int n, const char *seq)
 {
 	double ctime = cputime();
@@ -209,13 +225,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq)
 					event = NEW_COPY;
 				}
 			}
-			if (DEBUG) {
-				if (D_from == i - 1) {
-					printf("i=%d, Start copy, D_from=%d, max=%d\n", i, D_from, max_value);
-				} else {
-					printf("i=%d, New copy, C_from=%d, D_from=%d, max=%d\n", i, C_from, D_from, max_value);
-				}
-			}
+
 			// 0 is excluded because a match/mismatch is mandatory
 			if (event == START_REP) {
 				// Open duplication
@@ -305,23 +315,63 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq)
 
 	// Trace back the optimal path
 	int ptr_i = n, ptr_j = n;
-	int rep_cnt = 0;
+	vector<RepUnit> repetitions;
 	while (ptr_i > 0 and ptr_j > 0) {
-		const DpCell &t = dp[ptr_i][ptr_j];
+		DpCell &t = dp[ptr_i][ptr_j];
 		if (t.event == END_REP) {
 			assert(ptr_i == ptr_j); // Only main diagonal closes repetitions
-			fprintf(stderr, "Close: %d -> %d (Diagonal)\n", t.pj, ptr_i);
-		} else if (t.event == START_REP) {
-			fprintf(stderr, "Open: %d (Diagonal) -> %d, unit_size=%d\n", ptr_j, t.pj, t.pj - ptr_j + 1);
-			rep_cnt++;
-		} else if (t.event == NEW_COPY) {
-			fprintf(stderr, "Copy: %d (i=%d) -> %d, unit_size=%d\n", ptr_j, ptr_i, t.pj, t.pj - ptr_j + 1);
-			rep_cnt++;
+			if (DEBUG) fprintf(stderr, "Close: %d -> %d (Diagonal)\n", t.pj, ptr_i);
+
+			while (t.event != START_REP) {
+				ptr_i = t.pi;
+				ptr_j = t.pj;
+				t = dp[ptr_i][ptr_j]; // Lower-right corner of the sub-matrix
+				RepUnit u;
+				u.score = t.dh;
+				u.qe = ptr_i + 1;
+				u.te = ptr_j + 1;
+				while (t.event != NEW_COPY and t.event != START_REP) {
+					if (ptr_i == t.pi + 1 and ptr_j == t.pj + 1) {
+						if (seq[ptr_i-1] == seq[ptr_j-1]) u.match++;
+						else u.mis++;
+					} else {
+						u.gap++;
+					}
+					ptr_i = t.pi;
+					ptr_j = t.pj;
+					t = dp[ptr_i][ptr_j];
+				}
+				// Pointer is now at the upper-left corner
+				u.score -= dp[ptr_i][ptr_j].D_gate;
+				u.qb = ptr_i;
+				u.tb = ptr_j;
+				if (seq[ptr_i-1] == seq[ptr_j-1]) {
+					u.match++;
+					u.score += o.rep_mat_score;
+				} else {
+					u.mis++;
+					u.score += o.rep_mis_pen;
+				}
+				repetitions.push_back(u);
+
+				if (t.event == START_REP) {
+					if (DEBUG) fprintf(stderr, "Open: %d (Diagonal) -> %d, unit_size=%d\n", ptr_j, t.pj, t.pj - ptr_j + 1);
+				} else if (t.event == NEW_COPY) {
+					if (DEBUG) fprintf(stderr, "Copy: %d (i=%d) -> %d, unit_size=%d\n", ptr_j, ptr_i, t.pj, t.pj - ptr_j + 1);
+				}
+			}
 		}
 		ptr_i = t.pi;
 		ptr_j = t.pj;
 	}
-	fprintf(stderr, "Found %d duplications in %.3f CPU seconds\n", rep_cnt, cputime() - ctime);
+
+	fprintf(stdout, "Found %ld duplications in %.3f CPU seconds\n", repetitions.size(), cputime() - ctime);
+	reverse(repetitions.begin(), repetitions.end());
+	for (int i = 0; i < repetitions.size(); i++) {
+		const RepUnit &u = repetitions[i];
+		fprintf(stdout, "[%d] Tandem repeat between [%d,%d) and [%d,%d), score=%d (matches=%d, mismatches=%d, gaps=%d)\n",
+		  i+1, u.qb, u.qe, u.tb, u.te, u.score, u.match, u.mis, u.gap);
+	}
 
 	if (o.vis_fn) {
 		ofstream out(o.vis_fn);
@@ -372,7 +422,12 @@ void process_seqs(const TrdpOptions &opt, const char *fn)
 	kseq_t *ks = kseq_init(f);
 	while (kseq_read(ks) >= 0) {
 		fprintf(stderr, "Processing %s (length=%ld)\n", ks->name.s, ks->seq.l);
-		trdp_core(opt, ks->seq.l, ks->seq.s);
+		int len = ks->seq.l;
+		char *seq = ks->seq.s;
+		for (int i = 0; i < ks->seq.l; i++) {
+			seq[i] = (char)toupper(seq[i]);
+		}
+		trdp_core(opt, len, seq);
 	}
 	kseq_destroy(ks);
 	gzclose(f);
