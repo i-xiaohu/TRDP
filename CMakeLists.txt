@@ -6,3 +6,5 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3")
 
 add_executable(TRDP kseq.h trdp.cpp)
 target_link_libraries(TRDP -lz)
+
+add_executable(pr perfect_repeat.cpp)

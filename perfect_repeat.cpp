@@ -8,6 +8,8 @@
 #include <algorithm>
 using namespace std;
 
+const int MIN_UNIT_LEN = 3;
+
 // Longest prefix-substring match within S
 // Let K = LPS[i], S[0:K) = S[i:i+K)
 vector<int> calc_lps(const string &s) {
@@ -108,8 +110,17 @@ vector<int> calc_lsp(const string &t, const string &q) {
 	return lsp;
 }
 
+struct NewRep {
+	int s, e, len;
+	NewRep(): s(0), e(0), len(0) {}
+	bool operator < (const NewRep &r) const {
+		return len != r.len ?len > r.len :s < r.s;
+	}
+};
+
 // Search the repetitions formed by concatenating Q and T and centered at somewhere in T
-void find_center_at_right(string &q, string &t) {
+vector<NewRep> find_center_at_right(string &q, string &t)
+{
 	const int n = t.length();
 	const int m = q.length();
 	// The prefix-substring match within T
@@ -128,8 +139,9 @@ void find_center_at_right(string &q, string &t) {
 			assert(q[m-1-j] == t[i-j]);
 		}
 	}
+	vector<NewRep> ret;
 	int max_len = min((n + m) / 2, n); // Maximum repeat unit length
-	for (int u = 1; u <= max_len; u++) { // Iterate over unit length
+	for (int u = MIN_UNIT_LEN; u <= max_len; u++) { // Iterate over unit length
 		// The endpoints of repeats with a same length are consecutive
 		// If repeat ends at i in T, then
 		//     T[0:i-u] = T[u:i], i.e., LPS[u] >= i-u+1
@@ -137,7 +149,14 @@ void find_center_at_right(string &q, string &t) {
 		int end = min(2 * u - 2, u + (u < n ?lps[u] :0) - 1);
 		int beg = max(u - 1, 2 * u - lss[u-1] - 1);
 		if (beg <= end) {
-			fprintf(stderr, "Find %d repeats length of %d, ending at [%d,%d]\n", end-beg+1, u, beg, end);
+			NewRep rep;
+			for (int i = beg; i <= end; i++) {
+				rep.s = m-2*u+i+1;
+				rep.e = i;
+				rep.len = u;
+				ret.push_back(rep);
+			}
+//			fprintf(stderr, "Find %d repeats length of %d, ending at [%d,%d]\n", end-beg+1, u, beg, end);
 			for (int i = beg; i <= end; i++) {
 				for (int j = 0; j < i-u+1; j++) {
 					assert(t[j] == t[u+j]);
@@ -148,29 +167,68 @@ void find_center_at_right(string &q, string &t) {
 			}
 		}
 	}
+	return ret;
 }
 
-void divide_and_conquer(const string &s, int l, int r) {
+void divide_and_conquer(const string &s, int l, int r, vector<NewRep> &ans)
+{
 //	fprintf(stderr, "[%d,%d)\n", l, r);
-	if (r - l <= 1) {
+	if (r - l < MIN_UNIT_LEN * 2) {
 		return ;
 	}
 	int m = (l + r) / 2;
-	string a = s.substr(0, m);
-	string b = s.substr(m, r);
-	find_center_at_right(a, b);
-	divide_and_conquer(s, m, r);
-	// TODO: find center at left
-	divide_and_conquer(s, l, m);
+	string a = s.substr(l, m-l);
+	string b = s.substr(m, r-m);
+	vector<NewRep> r_rep = find_center_at_right(a, b);
+	for (NewRep &x : r_rep) {
+		x.s += l;
+		x.e += m;
+		assert(x.e - x.s + 1 == 2 * x.len);
+		for (int i = 0; i < x.len; i++) {
+			assert(s[x.s + i] == s[x.s + x.len + i]);
+		}
+		ans.push_back(x);
+	}
+
+	reverse(a.begin(), a.end());
+	reverse(b.begin(), b.end());
+	vector<NewRep> l_rep = find_center_at_right(b, a);
+	for (NewRep &x : l_rep) {
+		int tmp_s = a.length() - x.e - 1 + l;
+		int tmp_e = b.length() - x.s - 1 + m;
+		x.s = tmp_s;
+		x.e = tmp_e;
+		assert(x.e - x.s + 1 == 2 * x.len);
+		for (int i = 0; i < x.len; i++) {
+			assert(s[x.s + i] == s[x.s + x.len + i]);
+		}
+		// To avoid the redundant result when two strings are same
+		if (x.s != l or x.len != a.length()) {
+			ans.push_back(x);
+		}
+	}
+
+	divide_and_conquer(s, m, r, ans);
+	divide_and_conquer(s, l, m, ans);
 }
 
 int main(int argc, char *argv[]) {
-	srand(time(nullptr));
+	srand48(time(nullptr));
+	int n = 100000;
 	string s;
-	for (int i = 0; i < 1000; i++) {
+	for (int i = 0; i < n; i++) {
 		s += "ACGT"[rand() % 4];
 	}
-	divide_and_conquer(s, 0, s.length());
-	fprintf(stderr, "passed\n");
+	vector<NewRep> reps;
+	divide_and_conquer(s, 0, s.length(), reps);
+	sort(reps.begin(), reps.end());
+	fprintf(stderr, "Found %ld perfect repeats\n", reps.size());
+	for (int i = 0; i < reps.size(); i++) {
+		const NewRep &r = reps[i];
+		fprintf(stderr, "i=%d, length=%d, start=%d\n", i+1, r.len, r.s);
+		string a = s.substr(r.s, r.len);
+		string b = s.substr(r.s + r.len, r.len);
+		assert(a == b);
+	}
 	return 0;
 }
