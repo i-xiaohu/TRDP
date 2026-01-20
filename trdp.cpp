@@ -8,68 +8,12 @@
 #include <string>
 #include <fstream>
 #include <cassert>
-#include <sstream>
 #include <iostream>
 #include <getopt.h>
-#include <zlib.h>
-#include <sys/resource.h>
-#include <sys/time.h>
 #include <algorithm>
-#include "kseq.h"
+#include "utils.h"
 using namespace std;
 
-KSEQ_INIT(gzFile, gzread)
-
-double cputime()
-{
-	struct rusage r;
-	getrusage(RUSAGE_SELF, &r);
-	return r.ru_utime.tv_sec + r.ru_stime.tv_sec + 1e-6 * (r.ru_utime.tv_usec + r.ru_stime.tv_usec);
-}
-
-double realtime()
-{
-	struct timeval tp;
-	struct timezone tzp;
-	gettimeofday(&tp, &tzp);
-	return tp.tv_sec + tp.tv_usec * 1e-6;
-}
-
-struct TestEntity {
-	string motif;
-	int period;
-	int mutation;
-	int flank_l;
-	int flank_r;
-	string seq;
-};
-
-TestEntity input_csv_test_seq(int n, const char *fn)
-{
-	ifstream in(fn);
-	assert(in.is_open());
-	string line;
-	getline(in, line); // Header
-	for (int i = 0; i < n-1; i++) {
-		getline(in, line);
-	}
-	getline(in, line);
-	for (char &a : line) {
-		if (a == ',') {
-			a = ' ';
-		}
-	}
-	stringstream ss(line);
-	int id; ss >> id;
-	string motif; ss >> motif;
-	int period; ss >> period;
-	int mutation; ss >> mutation;
-	int flank_l; ss >> flank_l;
-	int flank_r; ss >> flank_r;
-	string seq; ss >> seq;
-	in.close();
-	return TestEntity{motif, period, mutation, flank_l, flank_r, seq};
-}
 
 // TRDP parameters
 struct TrdpOptions {
@@ -148,7 +92,8 @@ struct RepUnit {
 	}
 };
 
-void trdp_core(const TrdpOptions &o, int n, const char *seq)
+// Stage 1: identify breakpoints of tandem repeats using self alignment
+vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 {
 	double ctime = cputime();
 	const int MAT_SCORE = o.mat_score;
@@ -365,13 +310,13 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq)
 		ptr_j = t.pj;
 	}
 
-	fprintf(stdout, "Found %ld duplications in %.3f CPU seconds\n", repetitions.size(), cputime() - ctime);
 	reverse(repetitions.begin(), repetitions.end());
-	for (int i = 0; i < repetitions.size(); i++) {
-		const RepUnit &u = repetitions[i];
-		fprintf(stdout, "[%d] Tandem repeat between [%d,%d) and [%d,%d), score=%d (matches=%d, mismatches=%d, gaps=%d)\n",
-		  i+1, u.qb, u.qe, u.tb, u.te, u.score, u.match, u.mis, u.gap);
-	}
+	fprintf(stderr, "Self-alignment found %ld duplications in %.3f CPU seconds\n", repetitions.size(), cputime() - ctime);
+//	for (int i = 0; i < repetitions.size(); i++) {
+//		const RepUnit &u = repetitions[i];
+//		fprintf(stdout, "[%d] Tandem repeat between [%d,%d) and [%d,%d), score=%d (matches=%d, mismatches=%d, gaps=%d)\n",
+//		  i+1, u.qb, u.qe, u.tb, u.te, u.score, u.match, u.mis, u.gap);
+//	}
 
 	if (o.vis_fn) {
 		ofstream out(o.vis_fn);
@@ -389,16 +334,17 @@ void trdp_core(const TrdpOptions &o, int n, const char *seq)
 		out << 0 << "\t" << 0 << endl;
 		out.close();
 	}
+	return repetitions;
 }
 
 int usage(const TrdpOptions &o) {
-	fprintf(stderr, "Usage: TRDP [options] seq.fa\n");
-	fprintf(stderr, "  Self-Alignment Options:\n");
+	fprintf(stderr, "Usage: TRDP [options] seq1.fa seq2.fa\n");
+	fprintf(stderr, "  Scoring options:\n");
 	fprintf(stderr, "    -A [INT]  match score [%d]\n", o.mat_score);
 	fprintf(stderr, "    -B [INT]  mismatch penalty [%d]\n", o.mis_pen);
 	fprintf(stderr, "    -O [INT]  open gap(indel) penalty [%d]\n", o.gap_o);
 	fprintf(stderr, "    -E [INT]  extend gap penalty [%d]\n", o.gap_e);
-	fprintf(stderr, "  Duplication Alignment Options:\n");
+	fprintf(stderr, "  Duplication scoring options in self-alignment:\n");
 	fprintf(stderr, "    -u [INT]  minimum repeat unit size [%d]\n", o.min_unit_size);
 	fprintf(stderr, "    -d [INT]  open duplication penalty [%d]\n", o.open_rep_pen);
 	fprintf(stderr, "    -p [INT]  close duplication penalty [%d]\n", o.close_rep_pen);
@@ -411,26 +357,17 @@ int usage(const TrdpOptions &o) {
 	return 1;
 }
 
-static inline int str2int(const char* s) {
-	return (int)strtol(s, nullptr, 10);
-}
-
-void process_seqs(const TrdpOptions &opt, const char *fn)
-{
-	gzFile f = gzopen(fn, "r");
-	assert(f != nullptr);
-	kseq_t *ks = kseq_init(f);
-	while (kseq_read(ks) >= 0) {
-		fprintf(stderr, "Processing %s (length=%ld)\n", ks->name.s, ks->seq.l);
-		int len = ks->seq.l;
-		char *seq = ks->seq.s;
-		for (int i = 0; i < ks->seq.l; i++) {
-			seq[i] = (char)toupper(seq[i]);
-		}
-		trdp_core(opt, len, seq);
+void compare_tr_seqs(const TrdpOptions &opt, const char *fn1, const char *fn2) {
+	string seq1 = input_fasta_seq(fn1);
+	string seq2 = input_fasta_seq(fn2);
+	vector<RepUnit> rep1 = self_alignment(opt, seq1.length(), seq1.data());
+	vector<RepUnit> rep2 = self_alignment(opt, seq2.length(), seq2.data());
+	for (int i = 1; i < rep1.size(); i++) {
+		assert(rep1[i].qe >= rep1[i].te and rep1[i].qe > rep1[i-1].qe);
 	}
-	kseq_destroy(ks);
-	gzclose(f);
+	for (int i = 1; i < rep2.size(); i++) {
+		assert(rep2[i].qe >= rep2[i].te and rep2[i].qe > rep2[i-1].qe);
+	}
 }
 
 int main(int argc, char *argv[]) {
@@ -477,22 +414,15 @@ int main(int argc, char *argv[]) {
 				break;
 			default:
 				fprintf(stderr, "Unrecognized option `%c`\n", c);
-				return usage(opt);
+				return 1;
 		}
 	}
-	if (argc - optind == 1) {
-		process_seqs(opt, argv[optind]);
-	} else if (argc - optind == 2) {
-		// TEST: CSV ID
-		const char *fn = argv[optind];
-		int id = str2int(argv[optind + 1]);
-		TestEntity te = input_csv_test_seq(id, fn);
-		fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
-		        te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
-		fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
-		trdp_core(opt, te.seq.length(), te.seq.c_str());
+
+	if (argc - optind == 2) {
+		compare_tr_seqs(opt, argv[optind], argv[optind+1]);
 	} else {
-		return usage(opt);
+		fprintf(stderr, "Two FASTA files are required\n");
+		return 1;
 	}
 	fprintf(stderr, "Program finishes in %.3f CPU seconds, %.3f real seconds\n", cputime()-ctime, realtime()-rtime);
 	return 0;
