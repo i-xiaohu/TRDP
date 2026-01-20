@@ -11,9 +11,9 @@
 #include <iostream>
 #include <getopt.h>
 #include <algorithm>
+#include <numeric>
 #include "utils.h"
 using namespace std;
-
 
 // TRDP parameters
 struct TrdpOptions {
@@ -337,6 +337,233 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 	return repetitions;
 }
 
+struct DsiCell {
+	int E, F, H;
+	int pi, pj;
+	int event;
+	DsiCell() {
+		E = F = H = -INF;
+		pi = pj = -1;
+		event = -1;
+	}
+};
+
+void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &pa,
+			   int m, const char *b, const vector<bool> &pb)
+{
+	double ctime = cputime();
+	const int MAT_SCORE = o.mat_score;
+	const int MIS_PEN = o.mis_pen;
+	const int GAP_O = o.gap_o;
+	const int GAP_E = o.gap_e;
+	const int OPEN_REP = o.open_rep_pen;
+	const int COPY_PEN = OPEN_REP / 2; // TODO: register an option for it
+
+	vector<vector<DsiCell>> dp;
+	vector<vector<DsiCell>> wdp;
+	dp.resize(n + 1);
+	wdp.resize(n + 1);
+	for (int i = 0; i <= n; i++) {
+		dp[i].resize(m + 1);
+		wdp[i].resize(m + 1);
+	}
+	dp[0][0].H = 0;
+	for (int j = 1; j <= m; j++) {
+		dp[0][j].H = dp[0][j].F = GAP_O + GAP_E * j;
+	}
+	for (int i = 1; i <= n; i++) {
+		dp[i][0].E = dp[i][0].H = GAP_O + GAP_E * i;
+		int last_pb = -1;
+		for (int j = 1; j <= m; j++) {
+			int h = max(dp[i][j-1].H + GAP_O, dp[i][j-1].F) + GAP_E;
+			int v = max(dp[i-1][j].H + GAP_O, dp[i-1][j].E) + GAP_E;
+			int d = dp[i-1][j-1].H + (a[i-1] == b[j-1] ?MAT_SCORE :MIS_PEN);
+			dp[i][j].H = h;
+			dp[i][j].pi = i;
+			dp[i][j].pj = j-1;
+			if (v > dp[i][j].H) {
+				dp[i][j].H = v;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j;
+			}
+			if (d > dp[i][j].H) {
+				dp[i][j].H = d;
+				dp[i][j].pi = i-1;
+				dp[i][j].pj = j-1;
+			}
+			// Copy unit between two breakpoints
+			if (pb[j-1] and last_pb != -1) {
+				int n2 = i; // Maximum length of extension
+				int m2 = j - last_pb; // Template length (Usually, _m2_ << _n2_)
+				int max_ext = 0;
+				wdp[0][0].H = 0;
+				wdp[0][0].E = wdp[0][0].F = -INF;
+				for (int j2 = 1; j2 <= m2; j2++) {
+					wdp[0][j2].H = wdp[0][j2].F = GAP_O + GAP_E * j2;
+					wdp[0][j2].E = -INF;
+				}
+				// The loop is backward for sequences
+				for (int i2 = 1; i2 <= n2; i2++) {
+					wdp[i2][0].E = wdp[i2][0].H = GAP_O + GAP_E * i2;
+					wdp[i2][0].F = -INF;
+					// First pass
+					for (int j2 = 1; j2 <= m2; j2++) {
+						int h2, v2, d2, h3 = -INF, d3 = -INF;
+						h2 = max(wdp[i2][j2-1].H + GAP_O, wdp[i2][j2-1].F) + GAP_E;
+						v2 = max(wdp[i2-1][j2].H + GAP_O, wdp[i2-1][j2].E) + GAP_E;
+						d2 = wdp[i2-1][j2-1].H + (a[i-i2] == b[j-j2] ?MAT_SCORE :MIS_PEN);
+						// A pathway for copy event
+						if (j2 == 1 and i2 > 1) {
+							d3 = wdp[i2-1][m2].H + (a[i-i2] == b[j-m2] ?MAT_SCORE :MIS_PEN) + COPY_PEN;
+							// Theoretically, I don't need to consider horizontal transfer after copy event here.
+							// It will be correctly calculated in the second pass.
+							// Besides, consecutive gap after copy event is technically wrong.
+							// h3 = (wdp[i2-1][m2].H + GAP_O, wdp[i2-1][m2].F) + GAP_E + COPY_PEN;
+						}
+						wdp[i2][j2].F = h2;
+						wdp[i2][j2].E = v2;
+						wdp[i2][j2].H = -INF;
+						if (h2 > wdp[i2][j2].H) {
+							wdp[i2][j2].H = h2;
+							wdp[i2][j2].pi = i2;
+							wdp[i2][j2].pj = j2 - 1;
+						}
+						if (v2 > wdp[i2][j2].H) {
+							wdp[i2][j2].H = v2;
+							wdp[i2][j2].pi = i2 - 1;
+							wdp[i2][j2].pj = j2;
+						}
+						if (d2 > wdp[i2][j2].H) {
+							wdp[i2][j2].H = d2;
+							wdp[i2][j2].pi = i2 - 1;
+							wdp[i2][j2].pj = j2 - 1;
+						}
+						if (d3 > wdp[i2][j2].H) {
+							wdp[i2][j2].H = d3;
+							wdp[i2][j2].pi = i2 - 1;
+							wdp[i2][j2].pj = m2;
+						}
+					}
+					// Second pass for horizontal transfer
+					int x = wdp[i2][m2].H + GAP_O + COPY_PEN;
+					int pj = m2, max_val = -INF;
+					for (int j2 = 1; j2 <= m2; j2++) {
+						int h2 = x + GAP_E * j2;
+						if (h2 > wdp[i2][j2].H) {
+							wdp[i2][j2].H = h2;
+							wdp[i2][j2].pi = i2;
+							wdp[i2][j2].pj = pj;
+						}
+						pj = j2-1;
+						max_val = max(max_val, wdp[i2][j2].H);
+					}
+					if (max_val < 0) {
+						max_ext = i2;
+						break;
+					}
+				}
+				// Only the last column in WDP matrix is considered, therefore partial copy is not allowed
+				// TODO: support partial match in the last copy
+				for (int i2 = 1; i2 < max_ext; i2++) {
+					// TODO: Do I really need the penalty for opening copy event?
+					int tmp = dp[i-i2][j-m2].H + wdp[i2][m2].H + OPEN_REP - COPY_PEN;
+					if (tmp > dp[i][j].H) {
+						dp[i][j].H = tmp;
+						dp[i][j].event = NEW_COPY;
+						dp[i][j].pi = i - i2;
+						dp[i][j].pj = j - m2;
+					}
+				}
+			}
+			if (pb[j-1]) last_pb = j;
+		}
+	}
+
+	// Backtrace for CIGAR
+	int ti = n, tj = m;
+	string ext_a, ext_b;
+	while (ti > 0 and tj > 0) {
+		const DsiCell &c = dp[ti][tj];
+		if (c.event == NEW_COPY) {
+			fprintf(stderr, "COPY (%d,%d) -> (%d,%d)\n", c.pi, c.pj, ti, tj);
+			for (int j = tj; j > c.pj; j--) {
+				ext_b += b[j-1];
+			}
+			int gap = (ti - c.pi) - (tj - c.pj);
+			assert(gap > 0); // Copy number > 1; otherwise DSI score must be lower than classical SW
+			// TODO: retrieve the sub-matrix of WDP
+			for (int j = 0; j < gap; j++) {
+				ext_b += '#';
+			}
+			for (int i = ti; i > c.pi; i--) {
+				ext_a += a[i-1];
+			}
+		} else {
+//			fprintf(stderr, "Backtrace (%d,%d) -> (%d,%d)\n", c.pi, c.pj, ti, tj);
+			if (c.pi == ti and c.pj == tj-1) {
+				ext_a += '-';
+				ext_b += b[tj-1];
+			} else if (c.pi == ti-1 and c.pj == tj) {
+				ext_a += a[ti-1];
+				ext_b += '-';
+			} else {
+				ext_a += a[ti-1];
+				ext_b += b[tj-1];
+			}
+		}
+		ti = c.pi;
+		tj = c.pj;
+	}
+	while (ti > 0) {
+		ext_a += a[ti-1];
+		ext_b += '-';
+		ti--;
+	}
+	while (tj > 0) {
+		ext_a += '-';
+		ext_b += b[tj-1];
+		tj--;
+	}
+	reverse(ext_a.begin(), ext_a.end());
+	reverse(ext_b.begin(), ext_b.end());
+	fprintf(stderr, "%s\n", ext_a.data());
+	fprintf(stderr, "%s\n", ext_b.data());
+}
+
+void compare_tr_seqs(const TrdpOptions &opt, const char *fn1, const char *fn2) {
+	string seq1 = input_fasta_seq(fn1);
+	string seq2 = input_fasta_seq(fn2);
+	vector<RepUnit> rep1 = self_alignment(opt, seq1.length(), seq1.data());
+	vector<RepUnit> rep2 = self_alignment(opt, seq2.length(), seq2.data());
+	// Set end positions as break points
+	vector<bool> bp1(seq1.length(), false);
+	vector<bool> bp2(seq2.length(), false);
+	for (const RepUnit &u : rep1) {
+		bp1[u.qe] = true;
+		bp1[u.te] = true;
+	}
+	for (const RepUnit &u : rep2) {
+		bp2[u.qe] = true;
+		bp2[u.te] = true;
+	}
+	int sum1 = accumulate(bp1.begin(), bp1.end(), 0);
+	int sum2 = accumulate(bp2.begin(), bp2.end(), 0);
+	fprintf(stderr, "Identified %d and %d break points in two sequences\n", sum1, sum2);
+	for (int i = 0; i < seq1.length(); i++) {
+		if (bp1[i]) fprintf(stderr, "*");
+		fprintf(stderr, "%c", seq1[i]);
+	}
+	fprintf(stderr, "\n");
+	for (int i = 0; i < seq2.length(); i++) {
+		if (bp2[i]) fprintf(stderr, "*");
+		fprintf(stderr, "%c", seq2[i]);
+	}
+	fprintf(stderr, "\n");
+
+	// DSI alignment model of Gary Benson(1997)
+	trdp_core(opt, seq1.length(), seq1.data(), bp1, seq2.length(), seq2.data(), bp2);
+}
+
 int usage(const TrdpOptions &o) {
 	fprintf(stderr, "Usage: TRDP [options] seq1.fa seq2.fa\n");
 	fprintf(stderr, "  Scoring options:\n");
@@ -353,27 +580,15 @@ int usage(const TrdpOptions &o) {
 	fprintf(stderr, "    -o [INT]  open gap(indel) penalty [%d]\n", o.rep_gap_o);
 	fprintf(stderr, "    -e [INT]  extend gap penalty [%d]\n", o.rep_gap_e);
 	fprintf(stderr, "Note: duplication scoring matrix must reward more and/or \n"
-				    "  penalize less than self-alignment matrix to drive out duplication events.\n");
+	                "  penalize less than self-alignment matrix to drive out duplication events.\n");
 	return 1;
-}
-
-void compare_tr_seqs(const TrdpOptions &opt, const char *fn1, const char *fn2) {
-	string seq1 = input_fasta_seq(fn1);
-	string seq2 = input_fasta_seq(fn2);
-	vector<RepUnit> rep1 = self_alignment(opt, seq1.length(), seq1.data());
-	vector<RepUnit> rep2 = self_alignment(opt, seq2.length(), seq2.data());
-	for (int i = 1; i < rep1.size(); i++) {
-		assert(rep1[i].qe >= rep1[i].te and rep1[i].qe > rep1[i-1].qe);
-	}
-	for (int i = 1; i < rep2.size(); i++) {
-		assert(rep2[i].qe >= rep2[i].te and rep2[i].qe > rep2[i-1].qe);
-	}
 }
 
 int main(int argc, char *argv[]) {
 	double ctime = cputime(), rtime = realtime();
 	int c;
 	TrdpOptions opt;
+	if (argc == 1) return usage(opt);
 	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:v:")) >= 0) {
 		switch (c) {
 			case 'A':
