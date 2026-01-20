@@ -19,34 +19,35 @@ using namespace std;
 struct TrdpOptions {
 	// Minimum repeat unit size
 	int min_unit_size;
-	// Scoring matrix for self-alignment
+	// Mainly for alignment of two sequences
 	int mat_score;
 	int mis_pen;
 	int gap_o;
 	int gap_e;
-	// Scoring matrix for duplication (reward more and/or penalize less than normal matrix)
+	// Scoring matrix for duplication in self-alignment (reward more and/or penalize less to discover repeats)
 	int rep_mat_score;
 	int rep_mis_pen;
 	int rep_gap_o;
 	int rep_gap_e;
-	// It is necessary to penalize
+	// It is necessary to penalize for opening/closing copy events
 	int open_rep_pen;
 	int close_rep_pen;
 	const char *vis_fn;
 
 	TrdpOptions() {
 		min_unit_size = 5;
+		// Scoring matrix for original SW
 		mat_score = 1;
 		mis_pen = -4;
 		gap_o = -6;
 		gap_e = -1;
-		// TODO: would it be too lenient for sub-matrix?
+		// Scoring matrix for duplications should be adjusted by variation/mismatch rate
 		rep_mat_score = 2;
 		rep_mis_pen = -3;
 		rep_gap_o = -3;
 		rep_gap_e = -1;
 		open_rep_pen = -2;
-		close_rep_pen = -6; // TODO: how to set this value?
+		close_rep_pen = -6;
 		vis_fn = nullptr;
 	}
 };
@@ -340,16 +341,105 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 struct DsiCell {
 	int E, F, H;
 	int pi, pj;
-	int event;
+	bool copy;
 	DsiCell() {
 		E = F = H = -INF;
 		pi = pj = -1;
-		event = -1;
+		copy = false;
 	}
 };
 
+// Align b* (multiple copies of b) to a
+// Both a and b are reversed because the core function calculates in a backward way to reduce time complexity.
+// Return the maximum length of extension in a
+int extend_copies(const TrdpOptions &o, int n, const char *a, int m, const char *b, vector<vector<DsiCell>> &wdp)
+{
+	const int MAT_SCORE = o.mat_score;
+	const int MIS_PEN = o.mis_pen;
+	const int GAP_O = o.gap_o;
+	const int GAP_E = o.gap_e;
+	const int OPEN_REP = o.open_rep_pen;
+	const int COPY_PEN = OPEN_REP / 2;
+
+	wdp[0][0].H = 0;
+	wdp[0][0].E = wdp[0][0].F = -INF;
+	for (int j = 1; j <= m; j++) {
+		wdp[0][j].H = wdp[0][j].F = GAP_O + GAP_E * j;
+		wdp[0][j].E = -INF;
+	}
+	int max_ext = n;
+	// The loop is backward for sequences
+	for (int i = 1; i <= n; i++) {
+		wdp[i][0].E = wdp[i][0].H = GAP_O + GAP_E * i;
+		wdp[i][0].F = -INF;
+		// First pass
+		for (int j = 1; j <= m; j++) {
+			int h2, v2, d2, h3 = -INF, d3 = -INF;
+			h2 = max(wdp[i][j-1].H + GAP_O, wdp[i][j-1].F) + GAP_E;
+			v2 = max(wdp[i-1][j].H + GAP_O, wdp[i-1][j].E) + GAP_E;
+			d2 = wdp[i-1][j-1].H + (a[n-i] == b[m-j] ?MAT_SCORE :MIS_PEN);
+			// A pathway for copy event
+			if (j == 1 and i > 1) {
+				d3 = wdp[i-1][m].H + (a[n-i] == b[m-1] ?MAT_SCORE :MIS_PEN) + COPY_PEN;
+				// Theoretically, I don't need to consider horizontal transfer after copy event here.
+				// It will be correctly calculated in the second pass.
+				// Besides, consecutive gap after copy event is technically wrong.
+				// TODO: check if it would change the result
+				// h3 = (wdp[i-1][m].H + GAP_O, wdp[i-1][m].F) + GAP_E + COPY_PEN;
+			}
+			wdp[i][j].F = h2;
+			wdp[i][j].E = v2;
+			wdp[i][j].H = -INF;
+			if (h2 > wdp[i][j].H) {
+				wdp[i][j].H = h2;
+				wdp[i][j].pi = i;
+				wdp[i][j].pj = j - 1;
+			}
+			if (v2 > wdp[i][j].H) {
+				wdp[i][j].H = v2;
+				wdp[i][j].pi = i - 1;
+				wdp[i][j].pj = j;
+			}
+			if (d2 > wdp[i][j].H) {
+				wdp[i][j].H = d2;
+				wdp[i][j].pi = i - 1;
+				wdp[i][j].pj = j - 1;
+			}
+			if (h3 > wdp[i][j].H) {
+				wdp[i][j].H = h3;
+				wdp[i][j].pi = i - 1;
+				wdp[i][j].pj = m;
+			}
+			if (d3 > wdp[i][j].H) {
+				wdp[i][j].H = d3;
+				wdp[i][j].pi = i - 1;
+				wdp[i][j].pj = m;
+			}
+		}
+		// Second pass for horizontal transfer
+		int x = wdp[i][m].H + GAP_O + COPY_PEN;
+		int pj = m, max_val = -INF;
+		for (int j = 1; j <= m; j++) {
+			int h2 = x + GAP_E * j;
+			if (h2 > wdp[i][j].H) {
+				wdp[i][j].H = h2;
+				wdp[i][j].pi = i;
+				wdp[i][j].pj = pj;
+			}
+			pj = j - 1;
+			max_val = max(max_val, wdp[i][j].H);
+		}
+		if (max_val < 0) {
+			max_ext = i;
+			break;
+		}
+	}
+	return max_ext;
+}
+
+// Stage 2: find copy events around break points
 void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &pa,
-			   int m, const char *b, const vector<bool> &pb)
+               int m, const char *b, const vector<bool> &pb)
 {
 	double ctime = cputime();
 	const int MAT_SCORE = o.mat_score;
@@ -395,82 +485,28 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 			if (pb[j-1] and last_pb != -1) {
 				int n2 = i; // Maximum length of extension
 				int m2 = j - last_pb; // Template length (Usually, _m2_ << _n2_)
-				int max_ext = 0;
-				wdp[0][0].H = 0;
-				wdp[0][0].E = wdp[0][0].F = -INF;
-				for (int j2 = 1; j2 <= m2; j2++) {
-					wdp[0][j2].H = wdp[0][j2].F = GAP_O + GAP_E * j2;
-					wdp[0][j2].E = -INF;
-				}
-				// The loop is backward for sequences
-				for (int i2 = 1; i2 <= n2; i2++) {
-					wdp[i2][0].E = wdp[i2][0].H = GAP_O + GAP_E * i2;
-					wdp[i2][0].F = -INF;
-					// First pass
-					for (int j2 = 1; j2 <= m2; j2++) {
-						int h2, v2, d2, h3 = -INF, d3 = -INF;
-						h2 = max(wdp[i2][j2-1].H + GAP_O, wdp[i2][j2-1].F) + GAP_E;
-						v2 = max(wdp[i2-1][j2].H + GAP_O, wdp[i2-1][j2].E) + GAP_E;
-						d2 = wdp[i2-1][j2-1].H + (a[i-i2] == b[j-j2] ?MAT_SCORE :MIS_PEN);
-						// A pathway for copy event
-						if (j2 == 1 and i2 > 1) {
-							d3 = wdp[i2-1][m2].H + (a[i-i2] == b[j-m2] ?MAT_SCORE :MIS_PEN) + COPY_PEN;
-							// Theoretically, I don't need to consider horizontal transfer after copy event here.
-							// It will be correctly calculated in the second pass.
-							// Besides, consecutive gap after copy event is technically wrong.
-							// h3 = (wdp[i2-1][m2].H + GAP_O, wdp[i2-1][m2].F) + GAP_E + COPY_PEN;
-						}
-						wdp[i2][j2].F = h2;
-						wdp[i2][j2].E = v2;
-						wdp[i2][j2].H = -INF;
-						if (h2 > wdp[i2][j2].H) {
-							wdp[i2][j2].H = h2;
-							wdp[i2][j2].pi = i2;
-							wdp[i2][j2].pj = j2 - 1;
-						}
-						if (v2 > wdp[i2][j2].H) {
-							wdp[i2][j2].H = v2;
-							wdp[i2][j2].pi = i2 - 1;
-							wdp[i2][j2].pj = j2;
-						}
-						if (d2 > wdp[i2][j2].H) {
-							wdp[i2][j2].H = d2;
-							wdp[i2][j2].pi = i2 - 1;
-							wdp[i2][j2].pj = j2 - 1;
-						}
-						if (d3 > wdp[i2][j2].H) {
-							wdp[i2][j2].H = d3;
-							wdp[i2][j2].pi = i2 - 1;
-							wdp[i2][j2].pj = m2;
-						}
-					}
-					// Second pass for horizontal transfer
-					int x = wdp[i2][m2].H + GAP_O + COPY_PEN;
-					int pj = m2, max_val = -INF;
-					for (int j2 = 1; j2 <= m2; j2++) {
-						int h2 = x + GAP_E * j2;
-						if (h2 > wdp[i2][j2].H) {
-							wdp[i2][j2].H = h2;
-							wdp[i2][j2].pi = i2;
-							wdp[i2][j2].pj = pj;
-						}
-						pj = j2-1;
-						max_val = max(max_val, wdp[i2][j2].H);
-					}
-					if (max_val < 0) {
-						max_ext = i2;
-						break;
-					}
-				}
+				int max_ext = extend_copies(o, n2, a, m2, b + last_pb, wdp);
+//				if (pa[i-1]) {
+//					for (int i2 = 0; i2 < i; i2++) cout << a[i2]; cout << endl;
+//					for (int j2 = j-m2; j2 < j; j2++) cout << b[j2]; cout << endl;
+//					cout << max_ext << endl;
+//					for (int i2 = 0; i2 <= n2; i2++) {
+//						for (int j2 = 0; j2 <= m2; j2++) {
+//							cout << wdp[i2][j2].H << " ";
+//						}
+//						cout << endl;
+//					}
+//				}
+
 				// Only the last column in WDP matrix is considered, therefore partial copy is not allowed
 				// TODO: support partial match in the last copy
-				for (int i2 = 1; i2 < max_ext; i2++) {
-					// TODO: Do I really need the penalty for opening copy event?
-					int tmp = dp[i-i2][j-m2].H + wdp[i2][m2].H + OPEN_REP - COPY_PEN;
+				for (int k = 1; k < max_ext; k++) {
+					// Do I really need the penalty for opening copy event?
+					int tmp = dp[i-k][j-m2].H + wdp[k][m2].H + OPEN_REP - COPY_PEN;
 					if (tmp > dp[i][j].H) {
 						dp[i][j].H = tmp;
-						dp[i][j].event = NEW_COPY;
-						dp[i][j].pi = i - i2;
+						dp[i][j].copy = true;
+						dp[i][j].pi = i - k;
 						dp[i][j].pj = j - m2;
 					}
 				}
@@ -484,7 +520,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 	string ext_a, ext_b;
 	while (ti > 0 and tj > 0) {
 		const DsiCell &c = dp[ti][tj];
-		if (c.event == NEW_COPY) {
+		if (c.copy) {
 			fprintf(stderr, "COPY (%d,%d) -> (%d,%d)\n", c.pi, c.pj, ti, tj);
 			for (int j = tj; j > c.pj; j--) {
 				ext_b += b[j-1];
@@ -550,13 +586,13 @@ void compare_tr_seqs(const TrdpOptions &opt, const char *fn1, const char *fn2) {
 	int sum2 = accumulate(bp2.begin(), bp2.end(), 0);
 	fprintf(stderr, "Identified %d and %d break points in two sequences\n", sum1, sum2);
 	for (int i = 0; i < seq1.length(); i++) {
-		if (bp1[i]) fprintf(stderr, "*");
 		fprintf(stderr, "%c", seq1[i]);
+		if (bp1[i]) fprintf(stderr, "*");
 	}
 	fprintf(stderr, "\n");
 	for (int i = 0; i < seq2.length(); i++) {
-		if (bp2[i]) fprintf(stderr, "*");
 		fprintf(stderr, "%c", seq2[i]);
+		if (bp2[i]) fprintf(stderr, "*");
 	}
 	fprintf(stderr, "\n");
 
