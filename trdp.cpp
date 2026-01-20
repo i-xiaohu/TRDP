@@ -452,15 +452,20 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 	vector<vector<DsiCell>> dp;
 	vector<vector<DsiCell>> wdp;
 	dp.resize(n + 1);
-	wdp.resize(n + 1);
 	for (int i = 0; i <= n; i++) {
 		dp[i].resize(m + 1);
-		wdp[i].resize(m + 1);
 	}
 	dp[0][0].H = 0;
 	for (int j = 1; j <= m; j++) {
 		dp[0][j].H = dp[0][j].F = GAP_O + GAP_E * j;
 	}
+	int wn = max(n, m);
+	wdp.resize(wn + 1);
+	for (int i = 0; i <= wn; i++) {
+		wdp[i].resize(wn + 1);
+	}
+
+	int last_pa = -1;
 	for (int i = 1; i <= n; i++) {
 		dp[i][0].E = dp[i][0].H = GAP_O + GAP_E * i;
 		int last_pb = -1;
@@ -500,10 +505,12 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 
 				// Only the last column in WDP matrix is considered, therefore partial copy is not allowed
 				// TODO: support partial match in the last copy
+				int ti = 0, tj = m;
 				for (int k = 1; k < max_ext; k++) {
 					// Do I really need the penalty for opening copy event?
 					int tmp = dp[i-k][j-m2].H + wdp[k][m2].H + OPEN_REP - COPY_PEN;
 					if (tmp > dp[i][j].H) {
+						ti = k;
 						dp[i][j].H = tmp;
 						dp[i][j].copy = true;
 						dp[i][j].pi = i - k;
@@ -513,6 +520,25 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 			}
 			if (pb[j-1]) last_pb = j;
 		}
+
+		if (pa[i-1] and last_pa != -1) {
+			for (int j = 1; j <= m; j++) {
+				// Symmetric to breakpoints on B
+				int n2 = j, m2 = i - last_pa;
+				int max_ext = extend_copies(o, n2, b, m2, a + last_pa, wdp);
+				for (int k = 1; k < max_ext; k++) {
+					int tmp = dp[i-m2][j-k].H + wdp[k][m2].H + OPEN_REP - COPY_PEN;
+					if (tmp > dp[i][j].H) {
+						dp[i][j].H = tmp;
+						dp[i][j].copy = true;
+						dp[i][j].pi = i - m2;
+						dp[i][j].pj = j - k;
+					}
+				}
+
+			}
+		}
+		if (pa[i-1]) last_pa = i;
 	}
 
 	// Backtrace for CIGAR
@@ -525,14 +551,17 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 			for (int j = tj; j > c.pj; j--) {
 				ext_b += b[j-1];
 			}
+			for (int i = ti; i > c.pi; i--) {
+				ext_a += a[i-1];
+			}
+			// Copy number > 1; otherwise DSI score must be lower than classical SW
 			int gap = (ti - c.pi) - (tj - c.pj);
-			assert(gap > 0); // Copy number > 1; otherwise DSI score must be lower than classical SW
 			// TODO: retrieve the sub-matrix of WDP
 			for (int j = 0; j < gap; j++) {
 				ext_b += '#';
 			}
-			for (int i = ti; i > c.pi; i--) {
-				ext_a += a[i-1];
+			for (int j = gap; j < 0; j++) {
+				ext_a += '#';
 			}
 		} else {
 //			fprintf(stderr, "Backtrace (%d,%d) -> (%d,%d)\n", c.pi, c.pj, ti, tj);
