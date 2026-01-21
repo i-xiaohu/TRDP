@@ -17,37 +17,42 @@ using namespace std;
 
 // TRDP parameters
 struct TrdpOptions {
-	// Minimum repeat unit size
-	int min_unit_size;
-	// Mainly for alignment of two sequences
+	// Scoring matrix for alignment of two sequences
 	int mat_score;
 	int mis_pen;
 	int gap_o;
 	int gap_e;
-	// Scoring matrix for duplication in self-alignment (reward more and/or penalize less to discover repeats)
-	int rep_mat_score;
-	int rep_mis_pen;
-	int rep_gap_o;
-	int rep_gap_e;
-	// It is necessary to penalize for opening/closing copy events
-	int open_rep_pen;
-	int close_rep_pen;
+	// Penalty for copy-number variation
+	int cnv_o;
+	int cnv_e;
+	// Minimum repeat unit size (to reduce random repeats)
+	int min_unit_size;
+	// Scoring matrix for tandem repeats identification in self-alignment (reward more and/or penalize less)
+	int tr_mat_score;
+	int tr_mis_pen;
+	int tr_gap_o;
+	int tr_gap_e;
+	// It is necessary to penalize for opening/closing tandem repeats
+	int open_tr_pen;
+	int close_tr_pen;
 	const char *vis_fn;
 
 	TrdpOptions() {
 		min_unit_size = 5;
+		cnv_o = -15; // TODO: how to set this value?
+		cnv_e = -3;
 		// Scoring matrix for original SW
 		mat_score = 1;
 		mis_pen = -4;
 		gap_o = -6;
 		gap_e = -1;
 		// Scoring matrix for duplications should be adjusted by variation/mismatch rate
-		rep_mat_score = 2;
-		rep_mis_pen = -3;
-		rep_gap_o = -3;
-		rep_gap_e = -1;
-		open_rep_pen = -2;
-		close_rep_pen = -6;
+		tr_mat_score = 2;
+		tr_mis_pen = -3;
+		tr_gap_o = -3;
+		tr_gap_e = -1;
+		open_tr_pen = -2;
+		close_tr_pen = -6;
 		vis_fn = nullptr;
 	}
 };
@@ -102,12 +107,12 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 	const int GAP_O = o.gap_o;
 	const int GAP_E = o.gap_e;
 	const int MIN_UNIT = o.min_unit_size;
-	const int OPEN_REP = o.open_rep_pen;
-	const int CLOSE_REP = o.close_rep_pen;
-	const int RMAT_SCORE = o.rep_mat_score;
-	const int RMIS_PEN = o.rep_mis_pen;
-	const int RGAP_O = o.rep_gap_o;
-	const int RGAP_E = o.rep_gap_e;
+	const int OPEN_TR = o.open_tr_pen;
+	const int CLOSE_TR = o.close_tr_pen;
+	const int TR_MAT_SCORE = o.tr_mat_score;
+	const int TR_MIS_PEN = o.tr_mis_pen;
+	const int TR_GAP_O = o.tr_gap_o;
+	const int TR_GAP_E = o.tr_gap_e;
 
 	vector<vector<DpCell>> dp;
 	dp.resize(n + 1);
@@ -176,7 +181,7 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 			if (event == START_REP) {
 				// Open duplication
 				for (int j = 1; j <= D_from - MIN_UNIT + 1; j++) {
-					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN) + OPEN_REP;
+					int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN) + OPEN_TR;
 					dp[i][j].D_gate = max_value + tmp;
 					dp[i][j].C_from = j;
 					dp[i][j].D_from = D_from;
@@ -189,7 +194,7 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 				assert(C_from > 0);
 				for (int j = C_from; j <= D_from - MIN_UNIT + 1; j++) {
 					// No penalty for new copy
-					int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN);
+					int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN);
 					dp[i][j].D_gate = max_value + tmp;
 					dp[i][j].C_from = C_from;
 					dp[i][j].D_from = D_from;
@@ -202,12 +207,12 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 
 		// Repetition alignment starting from D gates
 		for (int j = 1; j < i; j++) {
-			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + RGAP_O, dp[i-1][j].de) + RGAP_E;
+			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + TR_GAP_O, dp[i - 1][j].de) + TR_GAP_E;
 			int h_score = -INF;
 			int d_score = -INF;
-			int tmp = (seq[i-1] == seq[j-1] ?RMAT_SCORE :RMIS_PEN);
+			int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN);
 			if (j <= dp[i][j-1].D_from) {
-				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + RGAP_O, dp[i][j-1].df) + RGAP_E;
+				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + TR_GAP_O, dp[i][j - 1].df) + TR_GAP_E;
 				d_score = max(dp[i-1][j-1].D_gate, dp[i-1][j-1].dh) + tmp;
 			}
 			DpCell backup = dp[i][j];
@@ -251,8 +256,8 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 				max_j = j;
 			}
 		}
-		if (max_value + CLOSE_REP > dp[i][i].H) {
-			dp[i][i].H = max_value + CLOSE_REP;
+		if (max_value + CLOSE_TR > dp[i][i].H) {
+			dp[i][i].H = max_value + CLOSE_TR;
 			dp[i][i].pi = i;
 			dp[i][i].pj = max_j;
 			dp[i][i].event = END_REP;
@@ -293,10 +298,10 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 				u.tb = ptr_j;
 				if (seq[ptr_i-1] == seq[ptr_j-1]) {
 					u.match++;
-					u.score += o.rep_mat_score;
+					u.score += o.tr_mat_score;
 				} else {
 					u.mis++;
-					u.score += o.rep_mis_pen;
+					u.score += o.tr_mis_pen;
 				}
 				repetitions.push_back(u);
 
@@ -358,8 +363,8 @@ int extend_copies(const TrdpOptions &o, int n, const char *a, int m, const char 
 	const int MIS_PEN = o.mis_pen;
 	const int GAP_O = o.gap_o;
 	const int GAP_E = o.gap_e;
-	const int OPEN_REP = o.open_rep_pen;
-	const int COPY_PEN = OPEN_REP / 2;
+	const int CNV_O = o.cnv_o;
+	const int CNV_E = o.cnv_e;
 
 	wdp[0][0].H = 0;
 	wdp[0][0].E = wdp[0][0].F = -INF;
@@ -380,7 +385,7 @@ int extend_copies(const TrdpOptions &o, int n, const char *a, int m, const char 
 			d2 = wdp[i-1][j-1].H + (a[n-i] == b[m-j] ?MAT_SCORE :MIS_PEN);
 			// A pathway for copy event
 			if (j == 1 and i > 1) {
-				d3 = wdp[i-1][m].H + (a[n-i] == b[m-1] ?MAT_SCORE :MIS_PEN) + COPY_PEN;
+				d3 = wdp[i-1][m].H + (a[n-i] == b[m-1] ?MAT_SCORE :MIS_PEN) + CNV_E;
 				// Theoretically, I don't need to consider horizontal transfer after copy event here.
 				// It will be correctly calculated in the second pass.
 				// Besides, consecutive gap after copy event is technically wrong.
@@ -417,7 +422,7 @@ int extend_copies(const TrdpOptions &o, int n, const char *a, int m, const char 
 			}
 		}
 		// Second pass for horizontal transfer
-		int x = wdp[i][m].H + GAP_O + COPY_PEN;
+		int x = wdp[i][m].H + GAP_O + CNV_E;
 		int pj = m, max_val = -INF;
 		for (int j = 1; j <= m; j++) {
 			int h2 = x + GAP_E * j;
@@ -446,8 +451,8 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 	const int MIS_PEN = o.mis_pen;
 	const int GAP_O = o.gap_o;
 	const int GAP_E = o.gap_e;
-	const int OPEN_REP = o.open_rep_pen;
-	const int COPY_PEN = OPEN_REP / 2; // TODO: register an option for it
+	const int CNV_O = o.cnv_o;
+	const int CNV_E = o.cnv_e;
 
 	vector<vector<DsiCell>> dp;
 	vector<vector<DsiCell>> wdp;
@@ -473,6 +478,8 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 			int h = max(dp[i][j-1].H + GAP_O, dp[i][j-1].F) + GAP_E;
 			int v = max(dp[i-1][j].H + GAP_O, dp[i-1][j].E) + GAP_E;
 			int d = dp[i-1][j-1].H + (a[i-1] == b[j-1] ?MAT_SCORE :MIS_PEN);
+			dp[i][j].E = v;
+			dp[i][j].F = h;
 			dp[i][j].H = h;
 			dp[i][j].pi = i;
 			dp[i][j].pj = j-1;
@@ -507,8 +514,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 				// TODO: support partial match in the last copy
 				int ti = 0, tj = m;
 				for (int k = 1; k < max_ext; k++) {
-					// Do I really need the penalty for opening copy event?
-					int tmp = dp[i-k][j-m2].H + wdp[k][m2].H + OPEN_REP - COPY_PEN;
+					int tmp = dp[i-k][j-m2].H + wdp[k][m2].H + CNV_O;
 					if (tmp > dp[i][j].H) {
 						ti = k;
 						dp[i][j].H = tmp;
@@ -527,7 +533,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 				int n2 = j, m2 = i - last_pa;
 				int max_ext = extend_copies(o, n2, b, m2, a + last_pa, wdp);
 				for (int k = 1; k < max_ext; k++) {
-					int tmp = dp[i-m2][j-k].H + wdp[k][m2].H + OPEN_REP - COPY_PEN;
+					int tmp = dp[i-m2][j-k].H + wdp[k][m2].H + CNV_O;
 					if (tmp > dp[i][j].H) {
 						dp[i][j].H = tmp;
 						dp[i][j].copy = true;
@@ -540,6 +546,7 @@ void trdp_core(const TrdpOptions &o, int n, const char *a, const vector<bool> &p
 		}
 		if (pa[i-1]) last_pa = i;
 	}
+	fprintf(stderr, "DP score=%d\n", dp[n][m].H);
 
 	// Backtrace for CIGAR
 	int ti = n, tj = m;
@@ -631,21 +638,23 @@ void compare_tr_seqs(const TrdpOptions &opt, const char *fn1, const char *fn2) {
 
 int usage(const TrdpOptions &o) {
 	fprintf(stderr, "Usage: TRDP [options] seq1.fa seq2.fa\n");
-	fprintf(stderr, "  Scoring options:\n");
+	fprintf(stderr, "  Scoring options for alignment of two sequences:\n");
 	fprintf(stderr, "    -A [INT]  match score [%d]\n", o.mat_score);
 	fprintf(stderr, "    -B [INT]  mismatch penalty [%d]\n", o.mis_pen);
 	fprintf(stderr, "    -O [INT]  open gap(indel) penalty [%d]\n", o.gap_o);
 	fprintf(stderr, "    -E [INT]  extend gap penalty [%d]\n", o.gap_e);
-	fprintf(stderr, "  Duplication scoring options in self-alignment:\n");
+	fprintf(stderr, "    -V [INT]  open copy-number variation penalty [%d]\n", o.cnv_o);
+	fprintf(stderr, "    -C [INT]  extend copy penalty [%d]\n", o.cnv_e);
+	fprintf(stderr, "  Scoring options for self-alignment:\n");
 	fprintf(stderr, "    -u [INT]  minimum repeat unit size [%d]\n", o.min_unit_size);
-	fprintf(stderr, "    -d [INT]  open duplication penalty [%d]\n", o.open_rep_pen);
-	fprintf(stderr, "    -p [INT]  close duplication penalty [%d]\n", o.close_rep_pen);
-	fprintf(stderr, "    -a [INT]  match score [%d]\n", o.rep_mat_score);
-	fprintf(stderr, "    -b [INT]  mismatch penalty [%d]\n", o.rep_mis_pen);
-	fprintf(stderr, "    -o [INT]  open gap(indel) penalty [%d]\n", o.rep_gap_o);
-	fprintf(stderr, "    -e [INT]  extend gap penalty [%d]\n", o.rep_gap_e);
-	fprintf(stderr, "Note: duplication scoring matrix must reward more and/or \n"
-	                "  penalize less than self-alignment matrix to drive out duplication events.\n");
+	fprintf(stderr, "    -d [INT]  open tandem repeat penalty [%d]\n", o.open_tr_pen);
+	fprintf(stderr, "    -p [INT]  close tandem repeat penalty [%d]\n", o.close_tr_pen);
+	fprintf(stderr, "    -a [INT]  match score [%d]\n", o.tr_mat_score);
+	fprintf(stderr, "    -b [INT]  mismatch penalty [%d]\n", o.tr_mis_pen);
+	fprintf(stderr, "    -o [INT]  open gap(indel) penalty [%d]\n", o.tr_gap_o);
+	fprintf(stderr, "    -e [INT]  extend gap penalty [%d]\n", o.tr_gap_e);
+	fprintf(stderr, "Note: self-alignment scoring matrix must reward more and/or \n"
+	                "  penalize less than regular matrix to discover tandem repeats.\n");
 	return 1;
 }
 
@@ -654,7 +663,7 @@ int main(int argc, char *argv[]) {
 	int c;
 	TrdpOptions opt;
 	if (argc == 1) return usage(opt);
-	while ((c = getopt(argc, argv, "A:B:O:E:u:p:a:b:o:e:v:")) >= 0) {
+	while ((c = getopt(argc, argv, "A:B:O:E:V:C:u:d:p:a:b:o:e:v:")) >= 0) {
 		switch (c) {
 			case 'A':
 				opt.mat_score = str2int(optarg);
@@ -668,26 +677,32 @@ int main(int argc, char *argv[]) {
 			case 'E':
 				opt.gap_e = str2int(optarg);
 				break;
+			case 'V':
+				opt.cnv_o = str2int(optarg);
+				break;
+			case 'C':
+				opt.cnv_e = str2int(optarg);
+				break;
 			case 'u':
 				opt.min_unit_size = str2int(optarg);
 				break;
 			case 'd':
-				opt.open_rep_pen = str2int(optarg);
+				opt.open_tr_pen = str2int(optarg);
 				break;
 			case 'p':
-				opt.close_rep_pen = str2int(optarg);
+				opt.close_tr_pen = str2int(optarg);
 				break;
 			case 'a':
-				opt.rep_mat_score = str2int(optarg);
+				opt.tr_mat_score = str2int(optarg);
 				break;
 			case 'b':
-				opt.rep_mis_pen = str2int(optarg);
+				opt.tr_mis_pen = str2int(optarg);
 				break;
 			case 'o':
-				opt.rep_gap_o = str2int(optarg);
+				opt.tr_gap_o = str2int(optarg);
 				break;
 			case 'e':
-				opt.rep_gap_e = str2int(optarg);
+				opt.tr_gap_e = str2int(optarg);
 				break;
 			case 'v':
 				opt.vis_fn = optarg;
