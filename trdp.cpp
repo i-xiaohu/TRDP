@@ -69,16 +69,16 @@ int DEBUG = 0;
 struct DpCell {
 	int E, F, H; // The original SW matrix
 	int D_gate; // Gate of duplication
-	int D_from; // Where duplication starts
-	int C_from; // Where new copy starts
+	int D_end; // Where duplication ends
+	int D_beg; // Where duplication or new copy begins
 	int de, df, dh; // Sub matrix of duplication
 	int pi, pj, event; // Backtrace
 
 	DpCell() {
 		E = F = H = -INF;
 		D_gate = -INF;
-		D_from = -1;
-		C_from = -1;
+		D_end = -1;
+		D_beg = -1;
 		de = df = dh = -INF;
 		pi = pj = event = -1;
 	}
@@ -164,15 +164,15 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 		if (i > MIN_UNIT) {
 			// D gate comes from the last row
 			int max_value = dp[i-1][i-1].H; // Diagonal must be the maximum in regular matrix
-			int D_from = i - 1;
-			int C_from = -1;
+			int D_end = i - 1;
+			int D_beg = -1;
 			int event = START_REP;
 			for (int j = 1; j < i-1; j++) {
-				// FIXME: This prevents a small sub-matrix from forming, which might have better score in global view
-				if (dp[i-1][j].dh > max_value and dp[i-1][j].D_from == j) { // If multiple maximums exist, choose the first one
+				// Only start new copy after the end of duplication to prevent illegal path
+				if (dp[i-1][j].D_end == j and dp[i-1][j].dh > max_value) { // If multiple maximums exist, choose the first one
 					max_value = dp[i-1][j].dh;
-					C_from = dp[i-1][j].C_from;
-					D_from = j;
+					D_beg = dp[i - 1][j].D_beg;
+					D_end = j;
 					event = NEW_COPY;
 				}
 			}
@@ -180,26 +180,25 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 			// 0 is excluded because a match/mismatch is mandatory
 			if (event == START_REP) {
 				// Open duplication
-				for (int j = 1; j <= D_from - MIN_UNIT + 1; j++) {
+				for (int j = 1; j <= D_end - MIN_UNIT + 1; j++) {
 					int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN) + OPEN_TR;
 					dp[i][j].D_gate = max_value + tmp;
-					dp[i][j].C_from = j;
-					dp[i][j].D_from = D_from;
+					dp[i][j].D_beg = j;
+					dp[i][j].D_end = D_end;
 					dp[i][j].pi = i-1;
-					dp[i][j].pj = D_from;
+					dp[i][j].pj = D_end;
 					dp[i][j].event = event;
 				}
 			} else {
-				// FIXME: cells in [1, c_from] compete with d_from?
-				assert(C_from > 0);
-				for (int j = C_from; j <= D_from - MIN_UNIT + 1; j++) {
+				assert(D_beg > 0);
+				for (int j = D_beg; j <= D_end - MIN_UNIT + 1; j++) {
 					// No penalty for new copy
 					int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN);
 					dp[i][j].D_gate = max_value + tmp;
-					dp[i][j].C_from = C_from;
-					dp[i][j].D_from = D_from;
+					dp[i][j].D_beg = D_beg; // Inherit from previous gate
+					dp[i][j].D_end = D_end;
 					dp[i][j].pi = i-1;
-					dp[i][j].pj = D_from;
+					dp[i][j].pj = D_end;
 					dp[i][j].event = event;
 				}
 			}
@@ -207,42 +206,42 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 
 		// Repetition alignment starting from D gates
 		for (int j = 1; j < i; j++) {
-			int v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + TR_GAP_O, dp[i - 1][j].de) + TR_GAP_E;
-			int h_score = -INF;
-			int d_score = -INF;
-			int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN);
-			if (j <= dp[i][j-1].D_from) {
-				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + TR_GAP_O, dp[i][j - 1].df) + TR_GAP_E;
+			int v_score = -INF, h_score = -INF, d_score = -INF;
+			if (j >= dp[i-1][j].D_beg and j <= dp[i-1][j].D_end) {
+				v_score = max(max(dp[i-1][j].D_gate, dp[i-1][j].dh) + TR_GAP_O, dp[i-1][j].de) + TR_GAP_E;
+			}
+			if (j >= dp[i][j-1].D_beg and j <= dp[i][j-1].D_end) {
+				h_score = max(max(dp[i][j-1].D_gate, dp[i][j-1].dh) + TR_GAP_O, dp[i][j-1].df) + TR_GAP_E;
+			}
+			if (j >= dp[i-1][j-1].D_beg and j <= dp[i-1][j-1].D_end) {
+				int tmp = (seq[i-1] == seq[j-1] ? TR_MAT_SCORE : TR_MIS_PEN);
 				d_score = max(dp[i-1][j-1].D_gate, dp[i-1][j-1].dh) + tmp;
 			}
-			DpCell backup = dp[i][j];
-			if (v_score > dp[i][j].dh) {
+
+			// Here, >= prefers another copy instead of a new copy; it can generate longer tandem repeats
+			if (v_score >= dp[i][j].D_gate and v_score > dp[i][j].dh) {
 				dp[i][j].dh = v_score;
-				dp[i][j].C_from = dp[i-1][j].C_from;
-				dp[i][j].D_from = dp[i-1][j].D_from;
+				dp[i][j].D_beg = dp[i - 1][j].D_beg;
+				dp[i][j].D_end = dp[i - 1][j].D_end;
 				dp[i][j].pi = i-1;
 				dp[i][j].pj = j;
 				dp[i][j].event = WITHIN_REP;
 			}
-			if (h_score > dp[i][j].dh) {
+			if (h_score >= dp[i][j].D_gate and h_score > dp[i][j].dh) {
 				dp[i][j].dh = h_score;
-				dp[i][j].C_from = dp[i][j-1].C_from;
-				dp[i][j].D_from = dp[i][j-1].D_from;
+				dp[i][j].D_beg = dp[i][j - 1].D_beg;
+				dp[i][j].D_end = dp[i][j - 1].D_end;
 				dp[i][j].pi = i;
 				dp[i][j].pj = j-1;
 				dp[i][j].event = WITHIN_REP;
 			}
-			if (d_score > dp[i][j].dh) {
+			if (d_score >= dp[i][j].D_gate and d_score > dp[i][j].dh) {
 				dp[i][j].dh = d_score;
-				dp[i][j].C_from = dp[i-1][j-1].C_from;
-				dp[i][j].D_from = dp[i-1][j-1].D_from;
+				dp[i][j].D_beg = dp[i - 1][j - 1].D_beg;
+				dp[i][j].D_end = dp[i - 1][j - 1].D_end;
 				dp[i][j].pi = i-1;
 				dp[i][j].pj = j-1;
 				dp[i][j].event = WITHIN_REP;
-			}
-			// D gate opens again after sub-matrix calculation
-			if (dp[i][j].D_gate > dp[i][j].dh) {
-				dp[i][j] = backup;
 			}
 		}
 		// The alignment above can't reach the diagonal
@@ -251,7 +250,7 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 		int max_value = -INF, max_j = -1;
 		for (int j = 1; j < i; j++) {
 			// Only return to diagonal if sub-matrix reaches the lower-right corner
-			if (dp[i][j].dh > max_value and dp[i][j].D_from == j) {
+			if (dp[i][j].dh > max_value and dp[i][j].D_end == j) {
 				max_value = dp[i][j].dh;
 				max_j = j;
 			}
@@ -263,66 +262,6 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 			dp[i][i].event = END_REP;
 		}
 	}
-
-	// Trace back the optimal path
-	int ptr_i = n, ptr_j = n;
-	vector<RepUnit> repetitions;
-	while (ptr_i > 0 and ptr_j > 0) {
-		DpCell &t = dp[ptr_i][ptr_j];
-		if (t.event == END_REP) {
-			assert(ptr_i == ptr_j); // Only main diagonal closes repetitions
-			if (DEBUG) fprintf(stderr, "Close: %d -> %d (Diagonal)\n", t.pj, ptr_i);
-
-			while (t.event != START_REP) {
-				ptr_i = t.pi;
-				ptr_j = t.pj;
-				t = dp[ptr_i][ptr_j]; // Lower-right corner of the sub-matrix
-				RepUnit u;
-				u.score = t.dh;
-				u.qe = ptr_i + 1;
-				u.te = ptr_j + 1;
-				while (t.event != NEW_COPY and t.event != START_REP) {
-					if (ptr_i == t.pi + 1 and ptr_j == t.pj + 1) {
-						if (seq[ptr_i-1] == seq[ptr_j-1]) u.match++;
-						else u.mis++;
-					} else {
-						u.gap++;
-					}
-					ptr_i = t.pi;
-					ptr_j = t.pj;
-					t = dp[ptr_i][ptr_j];
-				}
-				// Pointer is now at the upper-left corner
-				u.score -= dp[ptr_i][ptr_j].D_gate;
-				u.qb = ptr_i;
-				u.tb = ptr_j;
-				if (seq[ptr_i-1] == seq[ptr_j-1]) {
-					u.match++;
-					u.score += o.tr_mat_score;
-				} else {
-					u.mis++;
-					u.score += o.tr_mis_pen;
-				}
-				repetitions.push_back(u);
-
-				if (t.event == START_REP) {
-					if (DEBUG) fprintf(stderr, "Open: %d (Diagonal) -> %d, unit_size=%d\n", ptr_j, t.pj, t.pj - ptr_j + 1);
-				} else if (t.event == NEW_COPY) {
-					if (DEBUG) fprintf(stderr, "Copy: %d (i=%d) -> %d, unit_size=%d\n", ptr_j, ptr_i, t.pj, t.pj - ptr_j + 1);
-				}
-			}
-		}
-		ptr_i = t.pi;
-		ptr_j = t.pj;
-	}
-
-	reverse(repetitions.begin(), repetitions.end());
-	fprintf(stderr, "Self-alignment found %ld duplications in %.3f CPU seconds\n", repetitions.size(), cputime() - ctime);
-//	for (int i = 0; i < repetitions.size(); i++) {
-//		const RepUnit &u = repetitions[i];
-//		fprintf(stdout, "[%d] Tandem repeat between [%d,%d) and [%d,%d), score=%d (matches=%d, mismatches=%d, gaps=%d)\n",
-//		  i+1, u.qb, u.qe, u.tb, u.te, u.score, u.match, u.mis, u.gap);
-//	}
 
 	if (o.vis_fn) {
 		ofstream out(o.vis_fn);
@@ -340,6 +279,66 @@ vector<RepUnit> self_alignment(const TrdpOptions &o, int n, const char *seq)
 		out << 0 << "\t" << 0 << endl;
 		out.close();
 	}
+
+	// Trace back the optimal path
+	int ti = n, tj = n;
+	vector<RepUnit> repetitions;
+	while (ti > 0 and tj > 0) {
+		DpCell &t = dp[ti][tj];
+		if (t.event == END_REP) {
+			assert(ti == tj); // Only main diagonal closes repetitions
+			if (DEBUG) fprintf(stderr, "Close: %d -> %d (Diagonal)\n", t.pj, ti);
+
+			while (t.event != START_REP) {
+				ti = t.pi;
+				tj = t.pj;
+				t = dp[ti][tj]; // Lower-right corner of the sub-matrix
+				RepUnit u;
+				u.score = t.dh;
+				u.qe = ti + 1;
+				u.te = tj + 1;
+				while (t.event != NEW_COPY and t.event != START_REP) {
+					if (ti == t.pi + 1 and tj == t.pj + 1) {
+						if (seq[ti - 1] == seq[tj - 1]) u.match++;
+						else u.mis++;
+					} else {
+						u.gap++;
+					}
+					ti = t.pi;
+					tj = t.pj;
+					t = dp[ti][tj];
+				}
+				// Pointer is now at the upper-left corner
+				u.score -= dp[ti][tj].D_gate;
+				u.qb = ti;
+				u.tb = tj;
+				if (seq[ti - 1] == seq[tj - 1]) {
+					u.match++;
+					u.score += o.tr_mat_score;
+				} else {
+					u.mis++;
+					u.score += o.tr_mis_pen;
+				}
+				repetitions.push_back(u);
+
+				if (t.event == START_REP) {
+					if (DEBUG) fprintf(stderr, "Open: %d (Diagonal) -> %d, unit_size=%d\n", tj, t.pj, t.pj - tj + 1);
+				} else if (t.event == NEW_COPY) {
+					if (DEBUG) fprintf(stderr, "Copy: %d (i=%d) -> %d, unit_size=%d\n", tj, ti, t.pj, t.pj - tj + 1);
+				}
+			}
+		}
+		ti = t.pi;
+		tj = t.pj;
+	}
+
+	reverse(repetitions.begin(), repetitions.end());
+	fprintf(stderr, "Self-alignment found %ld duplications in %.3f CPU seconds\n", repetitions.size(), cputime() - ctime);
+//	for (int i = 0; i < repetitions.size(); i++) {
+//		const RepUnit &u = repetitions[i];
+//		fprintf(stdout, "[%d] Tandem repeat between [%d,%d) and [%d,%d), score=%d (matches=%d, mismatches=%d, gaps=%d)\n",
+//		  i+1, u.qb, u.qe, u.tb, u.te, u.score, u.match, u.mis, u.gap);
+//	}
 	return repetitions;
 }
 
@@ -660,10 +659,11 @@ int usage(const TrdpOptions &o) {
 
 int main(int argc, char *argv[]) {
 	double ctime = cputime(), rtime = realtime();
-	int c;
 	TrdpOptions opt;
 	if (argc == 1) return usage(opt);
-	while ((c = getopt(argc, argv, "A:B:O:E:V:C:u:d:p:a:b:o:e:v:")) >= 0) {
+	int c;
+	bool test_stage1 = false;
+	while ((c = getopt(argc, argv, "A:B:O:E:V:C:u:d:p:a:b:o:e:v:1")) >= 0) {
 		switch (c) {
 			case 'A':
 				opt.mat_score = str2int(optarg);
@@ -707,10 +707,24 @@ int main(int argc, char *argv[]) {
 			case 'v':
 				opt.vis_fn = optarg;
 				break;
+			case '1':
+				test_stage1 = true;
+				break;
 			default:
 				fprintf(stderr, "Unrecognized option `%c`\n", c);
 				return 1;
 		}
+	}
+
+	if (test_stage1) {
+		const char *fn = argv[optind];
+		int id = str2int(argv[optind + 1]);
+		TestEntity te = input_csv_test_seq(id, fn);
+		fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
+		        te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
+		fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
+		self_alignment(opt, te.seq.length(), te.seq.c_str());
+		return 0;
 	}
 
 	if (argc - optind == 2) {
