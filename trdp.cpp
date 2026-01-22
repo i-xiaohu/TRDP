@@ -720,9 +720,8 @@ int main(int argc, char *argv[]) {
 		const char *fn = argv[optind];
 		int id = str2int(argv[optind + 1]);
 		TestEntity te = input_csv_test_seq(id, fn);
-		fprintf(stdout, "motif=%s, period=%d, mutation=%d, flank=(%d,%d)\n",
-		        te.motif.c_str(), te.period, te.mutation, te.flank_l, te.flank_r);
-		fprintf(stdout, "motif_len=%ld, seq_len=%ld\n", te.motif.length(), te.seq.length());
+		fprintf(stdout, "seq_len=%ld, motif_len=%ld, period=%d, mutation=%d, flank=(%d,%d)\n",
+		        te.seq.length(), te.motif.length(), te.period, te.mutation, te.flank_l, te.flank_r);
 		self_alignment(opt, te.seq.length(), te.seq.c_str());
 		return 0;
 	}
